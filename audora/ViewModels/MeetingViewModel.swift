@@ -7,6 +7,9 @@ import PostHog
 extension Notification.Name {
     static let meetingSaved = Notification.Name("MeetingSaved")
     static let meetingDeleted = Notification.Name("MeetingDeleted")
+    static let createNewRecording = Notification.Name("CreateNewRecording")
+    static let openSettings = Notification.Name("OpenSettings")
+    static let onboardingReset = Notification.Name("OnboardingReset")
 }
 
 enum MeetingViewTab: String, CaseIterable {

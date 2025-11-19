@@ -6,6 +6,17 @@ struct MeetingListView: View {
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @State private var selectedMeeting: Meeting?
     @State private var navigationPath = NavigationPath()
+    @Binding var triggerNewRecording: Bool
+    @Binding var triggerOpenSettings: Bool
+    
+    // Default initializer for use without bindings
+    init(settingsViewModel: SettingsViewModel, 
+         triggerNewRecording: Binding<Bool> = .constant(false),
+         triggerOpenSettings: Binding<Bool> = .constant(false)) {
+        self.settingsViewModel = settingsViewModel
+        self._triggerNewRecording = triggerNewRecording
+        self._triggerOpenSettings = triggerOpenSettings
+    }
     
     var body: some View {
         NavigationSplitView {
@@ -22,6 +33,15 @@ struct MeetingListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
             }
+        }
+        .onChange(of: triggerNewRecording) { _, _ in
+            // Create new recording when triggered from menu bar
+            let newMeeting = viewModel.createNewMeeting()
+            selectedMeeting = newMeeting
+        }
+        .onChange(of: triggerOpenSettings) { _, _ in
+            // Navigate to settings when triggered from menu bar
+            navigationPath.append("settings")
         }
     }
     
