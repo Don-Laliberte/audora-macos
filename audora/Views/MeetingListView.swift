@@ -510,22 +510,30 @@ struct MeetingDetailContentView: View {
     }
     
     private var transcriptView: some View {
-        ScrollView {
-            if viewModel.meeting.collapsedTranscriptChunks.isEmpty {
-                Text("Transcript will appear here...")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            // Audio player at the top
+            if let audioFileURL = viewModel.meeting.audioFileURL {
+                AudioPlayerView(audioURL: URL(fileURLWithPath: audioFileURL))
                     .padding()
-                    .foregroundColor(.secondary)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(viewModel.meeting.collapsedTranscriptChunks) { chunk in
-                        CollapsedTranscriptChunkView(chunk: chunk)
-                    }
-                }
-                .padding()
             }
+            
+            ScrollView {
+                if viewModel.meeting.collapsedTranscriptChunks.isEmpty {
+                    Text("Transcript will appear here...")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .foregroundColor(.secondary)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(viewModel.meeting.collapsedTranscriptChunks) { chunk in
+                            CollapsedTranscriptChunkView(chunk: chunk)
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .frame(maxHeight: .infinity)
         }
-        .frame(maxHeight: .infinity)
         .background(Color.gray.opacity(0.05))
         .cornerRadius(8)
     }

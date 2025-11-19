@@ -282,13 +282,13 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"audora/Preview Content\"";
-				DEVELOPMENT_TEAM = 3V2UU7RRK9;
+				DEVELOPMENT_TEAM = 2FDS9HH666;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = audora/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "audora needs access to your microphone for transcription.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Audora captures microphone audio for transcription. Mic following mode records your microphone ONLY when other apps are actively using it.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -297,7 +297,7 @@
 				MARKETING_VERSION = 0.0.1;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
-				PRODUCT_BUNDLE_IDENTIFIER = rami.audora;
+				PRODUCT_BUNDLE_IDENTIFIER = don.audora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -318,13 +318,13 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"audora/Preview Content\"";
-				DEVELOPMENT_TEAM = 3V2UU7RRK9;
+				DEVELOPMENT_TEAM = 2FDS9HH666;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = audora/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "audora needs access to your microphone for transcription.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Audora captures microphone audio for transcription. Mic following mode records your microphone ONLY when other apps are actively using it.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -333,7 +333,7 @@
 				MARKETING_VERSION = 0.0.1;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
-				PRODUCT_BUNDLE_IDENTIFIER = rami.audora;
+				PRODUCT_BUNDLE_IDENTIFIER = don.audora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
