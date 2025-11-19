@@ -153,7 +153,9 @@ struct AudioPlayerView: View {
     
     private func openInFinder() {
         guard let audioURL = audioURL else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([audioURL])
+        // Open the folder containing the audio file instead of just selecting the file
+        let folderURL = audioURL.deletingLastPathComponent()
+        NSWorkspace.shared.activateFileViewerSelecting([folderURL])
     }
 }
 

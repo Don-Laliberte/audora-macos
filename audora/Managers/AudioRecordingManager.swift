@@ -30,16 +30,27 @@ class AudioRecordingManager: ObservableObject {
         try? FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
     }
     
+    /// Gets the folder URL for a specific meeting's audio files
+    /// - Parameter meetingId: The ID of the meeting
+    /// - Returns: The URL of the meeting's audio folder
+    private func getMeetingFolder(for meetingId: UUID) -> URL {
+        return recordingsDirectory.appendingPathComponent(meetingId.uuidString)
+    }
+    
     /// Starts recording audio for a meeting
     /// - Parameter meetingId: The ID of the meeting
     @MainActor
     func startRecording(for meetingId: UUID) {
         print("🎙️ Starting audio recording for meeting: \(meetingId)")
         
+        // Create meeting-specific folder
+        let meetingFolder = getMeetingFolder(for: meetingId)
+        try? FileManager.default.createDirectory(at: meetingFolder, withIntermediateDirectories: true)
+        
         // Create unique segment file URLs with timestamp to avoid overwriting
         let timestamp = Int(Date().timeIntervalSince1970)
-        micFileURL = recordingsDirectory.appendingPathComponent("\(meetingId.uuidString)_mic_\(timestamp).caf")
-        systemFileURL = recordingsDirectory.appendingPathComponent("\(meetingId.uuidString)_system_\(timestamp).caf")
+        micFileURL = meetingFolder.appendingPathComponent("mic_\(timestamp).caf")
+        systemFileURL = meetingFolder.appendingPathComponent("system_\(timestamp).caf")
         
         // Initialize segments array for this meeting if needed
         if meetingSegments[meetingId] == nil {
@@ -142,8 +153,10 @@ class AudioRecordingManager: ObservableObject {
             print("✅ Added system segment: \(systemURL.lastPathComponent)")
         }
         
-        // Create output file URL
-        let outputURL = recordingsDirectory.appendingPathComponent("\(meetingId.uuidString).m4a")
+        // Create output file URL in meeting-specific folder
+        let meetingFolder = getMeetingFolder(for: meetingId)
+        try? FileManager.default.createDirectory(at: meetingFolder, withIntermediateDirectories: true)
+        let outputURL = meetingFolder.appendingPathComponent("recording.m4a")
         
         // Get all segments for this meeting
         var allSegments = meetingSegments[meetingId] ?? []
@@ -152,7 +165,7 @@ class AudioRecordingManager: ObservableObject {
         var existingFinalFile: URL? = nil
         if FileManager.default.fileExists(atPath: outputURL.path) {
             // Convert existing M4A to CAF format temporarily so we can combine it
-            let tempCAF = recordingsDirectory.appendingPathComponent("\(meetingId.uuidString)_existing_temp.caf")
+            let tempCAF = meetingFolder.appendingPathComponent("existing_temp.caf")
             if convertM4AToCAF(sourceURL: outputURL, outputURL: tempCAF) != nil {
                 existingFinalFile = tempCAF
                 allSegments.insert(tempCAF, at: 0) // Add existing file at the beginning
@@ -289,27 +302,16 @@ class AudioRecordingManager: ObservableObject {
     /// Deletes all audio files associated with a meeting
     /// - Parameter meetingId: The ID of the meeting
     func deleteAudioFiles(for meetingId: UUID) {
-        // Delete the final M4A file
-        let finalFileURL = recordingsDirectory.appendingPathComponent("\(meetingId.uuidString).m4a")
-        if FileManager.default.fileExists(atPath: finalFileURL.path) {
-            do {
-                try FileManager.default.removeItem(at: finalFileURL)
-                print("✅ Deleted audio file: \(finalFileURL.lastPathComponent)")
-            } catch {
-                print("❌ Failed to delete audio file: \(error)")
-            }
-        }
+        let meetingFolder = getMeetingFolder(for: meetingId)
         
-        // Delete any remaining segment files (in case recording was interrupted)
-        do {
-            let files = try FileManager.default.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: nil)
-            let segmentFiles = files.filter { $0.lastPathComponent.hasPrefix("\(meetingId.uuidString)_") }
-            for segmentFile in segmentFiles {
-                try? FileManager.default.removeItem(at: segmentFile)
-                print("✅ Deleted segment file: \(segmentFile.lastPathComponent)")
+        // Delete the entire meeting folder (which contains all audio files)
+        if FileManager.default.fileExists(atPath: meetingFolder.path) {
+            do {
+                try FileManager.default.removeItem(at: meetingFolder)
+                print("✅ Deleted meeting audio folder: \(meetingFolder.lastPathComponent)")
+            } catch {
+                print("❌ Failed to delete meeting audio folder: \(error)")
             }
-        } catch {
-            print("❌ Failed to list segment files: \(error)")
         }
         
         // Clear any tracked segments for this meeting
