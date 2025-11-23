@@ -442,6 +442,16 @@ struct MeetingDetailContentView: View {
         return recordingSessionManager.isRecording && !recordingSessionManager.isRecordingMeeting(viewModel.meeting.id)
     }
     
+    // Helper to get audio file URL - placeholder for now until backend is ready
+    private var audioFileURL: URL? {
+        // For testing: Load audio file from app bundle
+        if let url = Bundle.main.url(forResource: "audora_audio_test1", withExtension: "m4a") {
+            return url
+        }
+        // TODO: Replace with actual audio file path from meeting when backend is ready
+        // For now, return nil to show placeholder
+        return nil
+    }
     
     var body: some View {
         HSplitView {
