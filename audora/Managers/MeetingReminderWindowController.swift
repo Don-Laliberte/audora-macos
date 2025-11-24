@@ -44,6 +44,9 @@ class MeetingReminderWindowController: NSObject {
             onSettings: { [weak self] in
                 onSettings()
                 self?.hide()
+            },
+            onDismiss: { [weak self] in
+                self?.hide()
             }
         )
 
