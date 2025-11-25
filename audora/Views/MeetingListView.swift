@@ -61,9 +61,9 @@ struct MeetingListView: View {
             Spacer().frame(height: 12) // Add space before list content
 
             List(selection: $selectedMeeting) {
-                // Upcoming Events Section
+                // Upcoming events section (calendar events)
                 if !viewModel.upcomingEvents.isEmpty {
-                    Section(header: Text("Upcoming Meetings")) {
+                    Section(header: Text("Upcoming Meetings").font(.caption).foregroundColor(.secondary)) {
                         ForEach(viewModel.upcomingEvents, id: \.eventIdentifier) { event in
                             Button {
                                 let newMeeting = viewModel.createMeeting(from: event)

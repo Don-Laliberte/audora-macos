@@ -9,6 +9,7 @@ import SwiftUI
 import Sparkle
 import PostHog
 import EventKit
+import Combine
 
 @main
 struct AudoraApp: App {
@@ -113,6 +114,8 @@ class MenuBarViewModel: ObservableObject {
     @Published var nextEvent: EKEvent?
     @Published var showUpcomingInMenuBar: Bool = true
 
+    private var cancellables = Set<AnyCancellable>()
+
     init() {
         // Subscribe to calendar updates
         CalendarManager.shared.$nextEvent
@@ -122,10 +125,19 @@ class MenuBarViewModel: ObservableObject {
         // Initial load
         showUpcomingInMenuBar = UserDefaultsManager.shared.showUpcomingInMenuBar
 
-        // Listen for settings changes (simple polling or notification would be better, but this works for now)
-        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.showUpcomingInMenuBar = UserDefaultsManager.shared.showUpcomingInMenuBar
-        }
+        // Observe UserDefaults changes reactively instead of polling
+        UserDefaults.standard.publisher(for: \.showUpcomingInMenuBar)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newValue in
+                self?.showUpcomingInMenuBar = newValue
+            }
+            .store(in: &cancellables)
+    }
+}
+
+extension UserDefaults {
+    @objc dynamic var showUpcomingInMenuBar: Bool {
+        return bool(forKey: "showUpcomingInMenuBar")
     }
 }
 

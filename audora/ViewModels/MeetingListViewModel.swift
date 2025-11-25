@@ -17,11 +17,19 @@ class MeetingListViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let recordingSessionManager = RecordingSessionManager.shared
 
-    // Computed property to filter meetings based on search text
+    // Computed property to filter meetings based on search text AND exclude upcoming calendar events
     var filteredMeetings: [Meeting] {
-        guard !searchText.isEmpty else { return meetings }
+        // First, exclude meetings linked to upcoming calendar events
+        let upcomingEventIds = Set(upcomingEvents.map { $0.eventIdentifier })
+        let nonUpcomingMeetings = meetings.filter { meeting in
+            guard let eventId = meeting.calendarEventId else { return true }
+            return !upcomingEventIds.contains(eventId)
+        }
 
-        return meetings.filter { meeting in
+        // Then apply search filter if search text exists
+        guard !searchText.isEmpty else { return nonUpcomingMeetings }
+
+        return nonUpcomingMeetings.filter { meeting in
             // Search in title
             meeting.title.localizedCaseInsensitiveContains(searchText) ||
             // Search in user notes
@@ -75,7 +83,16 @@ class MeetingListViewModel: ObservableObject {
     }
 
     func createMeeting(from event: EKEvent) -> Meeting {
-        let newMeeting = Meeting(title: event.title)
+        // Check if a meeting already exists for this calendar event
+        if let existingMeeting = meetings.first(where: { $0.calendarEventId == event.eventIdentifier }) {
+            return existingMeeting
+        }
+
+        // Create new meeting with calendar event ID
+        let newMeeting = Meeting(
+            title: event.title ?? "Untitled Meeting",
+            calendarEventId: event.eventIdentifier
+        )
         meetings.insert(newMeeting, at: 0)
         _ = LocalStorageManager.shared.saveMeeting(newMeeting)
 
