@@ -71,6 +71,13 @@ class MeetingListViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        NotificationCenter.default.publisher(for: .meetingsDeleted)
+            .sink { [weak self] _ in
+                print("🔔 All meetings deleted notification received. Reloading meetings list...")
+                self?.loadMeetings()
+            }
+            .store(in: &cancellables)
+
         // Listen for transcription session save requests (from mic following)
         NotificationCenter.default.publisher(for: NSNotification.Name("SaveTranscriptionSession"))
             .sink { [weak self] notification in

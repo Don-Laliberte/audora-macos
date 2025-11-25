@@ -197,6 +197,26 @@ struct GeneralSettingsView: View {
                             viewModel.resetOnboarding()
                         }
                     }
+
+                    #if DEBUG
+                    Divider()
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Delete All Meetings")
+                                .font(.body)
+                                .fontWeight(.medium)
+                            Text("Permanently delete all meetings. This cannot be undone.")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                        Spacer()
+                        Button("Delete All") {
+                            viewModel.deleteAllMeetings()
+                        }
+                        .foregroundColor(.red)
+                    }
+                    #endif
                 }
                 .padding()
                 .background(Color(NSColor.controlBackgroundColor))

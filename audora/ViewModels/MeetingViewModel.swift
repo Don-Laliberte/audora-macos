@@ -10,6 +10,7 @@ extension Notification.Name {
     static let createNewRecording = Notification.Name("CreateNewRecording")
     static let openSettings = Notification.Name("OpenSettings")
     static let onboardingReset = Notification.Name("OnboardingReset")
+    static let meetingsDeleted = Notification.Name("com.audora.notification.meetingsDeleted")
 }
 
 enum MeetingViewTab: String, CaseIterable {

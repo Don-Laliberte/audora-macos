@@ -102,4 +102,14 @@ class SettingsViewModel: ObservableObject {
         // This will cause ContentView to re-evaluate and show onboarding
         NotificationCenter.default.post(name: .onboardingReset, object: nil)
     }
+
+    #if DEBUG
+    func deleteAllMeetings() {
+        // Delete all meetings from storage
+        LocalStorageManager.shared.deleteAllMeetings()
+
+        // Post notification to reload meetings in the UI
+        NotificationCenter.default.post(name: .meetingsDeleted, object: nil)
+    }
+    #endif
 }
