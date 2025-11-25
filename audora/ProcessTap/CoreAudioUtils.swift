@@ -1,16 +1,6 @@
 import Foundation
 import AudioToolbox
 
-// MARK: - Aggregate Device Constants
-// These are used for creating the aggregate device that wraps the process tap.
-let kAudioAggregateDeviceNameKey = "name"
-let kAudioAggregateDeviceUIDKey = "uid "
-let kAudioAggregateDeviceIsPrivateKey = "priv"
-let kAudioAggregateDeviceTapListKey = "tapl"
-let kAudioSubTapUIDKey = "uid "
-let kAudioSubTapDriftCompensationKey = "drft"
-let kAudioSubTapDriftCompensationQualityKey = "drfq"
-
 // MARK: - Constants
 
 extension AudioObjectID {
@@ -353,4 +343,3 @@ extension AudioObjectID {
         return try readString(kAudioDevicePropertyDeviceNameCFString)
     }
 }
-

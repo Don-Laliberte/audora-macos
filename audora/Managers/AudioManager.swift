@@ -69,6 +69,7 @@ class AudioManager: NSObject, ObservableObject {
 
                 print("🎤 Running applications changed, checking if tap restart is needed.")
                 Task {
+                    try? await Task.sleep(for: .milliseconds(500))
                     await self.restartSystemAudioTapIfNeeded()
                 }
             }
@@ -77,6 +78,64 @@ class AudioManager: NSObject, ObservableObject {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Audio Output Detection
+
+    /// Detects whether the user is currently using headphones or speakers
+    /// Returns true if headphones (wired or Bluetooth) are connected
+    private func isUsingHeadphones() -> Bool {
+        // macOS: Use Core Audio to check the default output device
+        do {
+            // Get the default output device
+            let defaultOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
+
+            // Check the device's transport type
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+
+            var transportType: UInt32 = 0
+            var dataSize: UInt32 = UInt32(MemoryLayout<UInt32>.size)
+            let err = AudioObjectGetPropertyData(defaultOutputID, &address, 0, nil, &dataSize, &transportType)
+
+            guard err == noErr else {
+                print("⚠️ Error reading audio device transport type: \(err)")
+                return false
+            }
+
+            // Check if the transport type indicates headphones
+            switch transportType {
+            case kAudioDeviceTransportTypeBluetooth,
+                 kAudioDeviceTransportTypeBluetoothLE:
+                // Bluetooth devices are likely headphones/earbuds
+                print("🎧 Detected Bluetooth headphones")
+                return true
+            default:
+                // For other transport types (USB, BuiltIn, etc.), check device name
+                if let deviceName = try? defaultOutputID.getDeviceName() {
+                    let name = deviceName.lowercased()
+                    // Check for common headphone/headset keywords
+                    if name.contains("headphone") ||
+                       name.contains("headset") ||
+                       name.contains("airpods") ||
+                       name.contains("beats") ||
+                       name.contains("earbuds") ||
+                       name.contains("earpods") {
+                        print("🎧 Detected headphones via device name: \(deviceName)")
+                        return true
+                    }
+                }
+
+                print("🔊 Using built-in/external speakers")
+                return false
+            }
+        } catch {
+            print("⚠️ Error checking macOS audio output device: \(error)")
+            return false
+        }
     }
 
     func startRecording() {
@@ -106,9 +165,21 @@ class AudioManager: NSObject, ObservableObject {
             case .success:
                 // Proceed with taps after cleanup
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    // Start microphone capture
+                    // Always start microphone - user prioritizes voice transcription
                     self.startMicrophoneTap()
-                    // Start system audio capture asynchronously
+
+                    // Check audio output device
+                    let usingHeadphones = self.isUsingHeadphones()
+
+                    if usingHeadphones {
+                        print("🎧 Headphones detected - optimal recording setup")
+                    } else {
+                        // Using speakers - warn about potential duplicates but still record
+                        print("🔊 Speakers detected - may have some echo/duplicates")
+                        print("💡 Connect headphones for best results (prevents echo)")
+                    }
+
+                    // Always start system audio capture
                     Task {
                         await self.startSystemAudioTap()
                     }
