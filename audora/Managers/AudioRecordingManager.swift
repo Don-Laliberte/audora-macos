@@ -76,8 +76,10 @@ class AudioRecordingManager: ObservableObject {
                 ]
                 
                 try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                // Create file using format directly to ensure channel layout matches buffer structure
-                micAudioFile = try AVAudioFile(forWriting: fileURL, format: format)
+                // Create file using format's commonFormat to ensure channel layout matches buffer structure
+                // Use the format's actual commonFormat instead of forcing .pcmFormatFloat32
+                let commonFormat = format.commonFormat
+                micAudioFile = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: commonFormat, interleaved: format.isInterleaved)
                 micFormat = format
                 print("✅ Created mic audio file: \(fileURL.lastPathComponent)")
             } catch {
@@ -117,8 +119,10 @@ class AudioRecordingManager: ObservableObject {
                 ]
                 
                 try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                // Create file using format directly to ensure channel layout matches buffer structure
-                systemAudioFile = try AVAudioFile(forWriting: fileURL, format: format)
+                // Create file using format's commonFormat to ensure channel layout matches buffer structure
+                // Use the format's actual commonFormat instead of forcing .pcmFormatFloat32
+                let commonFormat = format.commonFormat
+                systemAudioFile = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: commonFormat, interleaved: format.isInterleaved)
                 systemFormat = format
                 print("✅ Created system audio file: \(fileURL.lastPathComponent)")
             } catch {
