@@ -300,6 +300,38 @@ class MeetingViewModel: ObservableObject {
         // Clear existing notes for streaming
         meeting.generatedNotes = ""
 
+        // Upload audio file to Convex if available
+        if let audioFileURLString = meeting.audioFileURL {
+            let audioFileURL = URL(fileURLWithPath: audioFileURLString)
+            
+            // Check if file exists
+            if FileManager.default.fileExists(atPath: audioFileURL.path) {
+                do {
+                    print("📤 Uploading audio file to Convex before generating notes...")
+                    let storageId = try await ConvexService.shared.uploadAudioFile(
+                        audioFileURL: audioFileURL,
+                        meetingId: meeting.id
+                    )
+                    
+                    if let storageId = storageId {
+                        print("✅ Audio file uploaded to Convex. Storage ID: \(storageId)")
+                        // TODO: Store storageId in meeting when database schema is updated
+                        // For now, we just log it
+                    } else {
+                        print("⚠️ Audio file uploaded but no storage ID returned")
+                    }
+                } catch {
+                    // Log error but don't block note generation if upload fails
+                    print("⚠️ Failed to upload audio file to Convex: \(error.localizedDescription)")
+                    // Continue with note generation even if upload fails
+                }
+            } else {
+                print("⚠️ Audio file path exists but file not found: \(audioFileURLString)")
+            }
+        } else {
+            print("ℹ️ No audio file available for this meeting, skipping upload")
+        }
+
         // Load settings for generation
         let userBlurb = UserDefaultsManager.shared.userBlurb
         let systemPrompt = UserDefaultsManager.shared.systemPrompt

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C56DE0BE2EF38F5E00AB086D /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = C56DE0BD2EF38F5E00AB086D /* ConvexMobile */; };
 		CC5718382E2020490042BA88 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = CC5718372E2020490042BA88 /* OpenAI */; };
 		CCBA53E72E212F1C00469D84 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = CCBA53E62E212F1C00469D84 /* Sparkle */; };
 		CCC33F812E236B6F00EDE382 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = CCC33F802E236B6F00EDE382 /* PostHog */; };
@@ -32,6 +33,7 @@
 				CCC33F812E236B6F00EDE382 /* PostHog in Frameworks */,
 				CC5718382E2020490042BA88 /* OpenAI in Frameworks */,
 				CCBA53E72E212F1C00469D84 /* Sparkle in Frameworks */,
+				C56DE0BE2EF38F5E00AB086D /* ConvexMobile in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,6 +87,7 @@
 				CC5718372E2020490042BA88 /* OpenAI */,
 				CCBA53E62E212F1C00469D84 /* Sparkle */,
 				CCC33F802E236B6F00EDE382 /* PostHog */,
+				C56DE0BD2EF38F5E00AB086D /* ConvexMobile */,
 			);
 			productName = audora;
 			productReference = CC5718182E201D8D0042BA88 /* audora.app */;
@@ -118,6 +121,7 @@
 				CC5718362E2020490042BA88 /* XCRemoteSwiftPackageReference "OpenAI" */,
 				CCBA53E52E212F1C00469D84 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				CCC33F7F2E236B6F00EDE382 /* XCRemoteSwiftPackageReference "posthog-ios" */,
+				C56DE0BC2EF38F5E00AB086D /* XCRemoteSwiftPackageReference "convex-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CC5718192E201D8D0042BA88 /* Products */;
@@ -365,6 +369,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		C56DE0BC2EF38F5E00AB086D /* XCRemoteSwiftPackageReference "convex-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/get-convex/convex-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.7.0;
+			};
+		};
 		CC5718362E2020490042BA88 /* XCRemoteSwiftPackageReference "OpenAI" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/MacPaw/OpenAI";
@@ -392,6 +404,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		C56DE0BD2EF38F5E00AB086D /* ConvexMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C56DE0BC2EF38F5E00AB086D /* XCRemoteSwiftPackageReference "convex-swift" */;
+			productName = ConvexMobile;
+		};
 		CC5718372E2020490042BA88 /* OpenAI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = CC5718362E2020490042BA88 /* XCRemoteSwiftPackageReference "OpenAI" */;
