@@ -95,15 +95,27 @@ class ConvexService {
             // The response should contain a JSON object with a storageId field
             if let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let storageId = jsonResponse["storageId"] as? String {
-                print("✅ Audio file uploaded successfully. Storage ID: \(storageId)")
+                print("✅ Audio file uploaded successfully!")
+                print("   📁 Storage ID: \(storageId)")
+                print("   📊 File size: \(audioData.count) bytes (\(String(format: "%.2f", Double(audioData.count) / 1024 / 1024)) MB)")
+                print("   🔗 Verify in Convex Dashboard → Files section")
                 return storageId
             } else if let responseString = String(data: data, encoding: .utf8),
-                      !responseString.isEmpty {
+                      !responseString.isEmpty,
+                      responseString.hasPrefix("k") || responseString.count > 10 {
                 // Some Convex implementations return the storage ID directly as a string
-                print("✅ Audio file uploaded successfully. Storage ID: \(responseString)")
+                // Storage IDs typically start with "k" and are long strings
+                print("✅ Audio file uploaded successfully!")
+                print("   📁 Storage ID: \(responseString)")
+                print("   📊 File size: \(audioData.count) bytes (\(String(format: "%.2f", Double(audioData.count) / 1024 / 1024)) MB)")
+                print("   🔗 Verify in Convex Dashboard → Files section")
                 return responseString
             } else {
+                // Log the raw response for debugging
+                let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode"
                 print("⚠️ Upload succeeded but could not parse storage ID from response")
+                print("   Raw response: \(responseString)")
+                print("   Response length: \(data.count) bytes")
                 return nil
             }
         } catch {

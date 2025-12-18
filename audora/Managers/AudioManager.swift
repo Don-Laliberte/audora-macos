@@ -339,8 +339,15 @@ class AudioManager: NSObject, ObservableObject {
 
         // Get all running processes that are producing audio
         let allProcessObjectIDs = audioProcessController.processes.map { $0.objectID }
+        
+        // Provide better diagnostics
+        print("📊 Found \(allProcessObjectIDs.count) audio-producing process(es)")
         if allProcessObjectIDs.isEmpty {
             print("⚠️ No audio-producing processes found. System audio tap might not capture anything.")
+            print("   💡 Make sure an app is playing audio (Zoom, Teams, etc.)")
+        } else {
+            let processNames = audioProcessController.processes.prefix(3).map { $0.name }
+            print("   Processes: \(processNames.joined(separator: ", "))\(audioProcessController.processes.count > 3 ? "..." : "")")
         }
 
         // Configure the tap for system-wide audio
@@ -350,7 +357,19 @@ class AudioManager: NSObject, ObservableObject {
 
         // Check for activation errors
         if let tapError = newTap.errorMessage {
-            let errorMsg = "Failed to activate system audio tap: \(tapError)"
+            var errorMsg = "Failed to activate system audio tap: \(tapError)"
+            
+            // Provide helpful guidance based on error
+            if tapError.contains("error 560947818") || tapError.contains("error -536870206") {
+                errorMsg += "\n\n💡 This usually means:\n"
+                errorMsg += "   1. Screen Recording permission is required\n"
+                errorMsg += "   2. Go to System Settings > Privacy & Security > Screen & System Audio Recording\n"
+                errorMsg += "   3. Enable Audora in the list\n"
+                errorMsg += "   4. Restart the app after granting permission"
+            } else if allProcessObjectIDs.isEmpty {
+                errorMsg += "\n\n💡 No audio-producing apps detected. Start a meeting app (Zoom, Teams, etc.) first."
+            }
+            
             print("❌ \(errorMsg)")
             self.errorMessage = errorMsg
             if !isRestart { stopRecording() }
