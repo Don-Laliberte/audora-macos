@@ -76,7 +76,8 @@ class AudioRecordingManager: ObservableObject {
                 ]
                 
                 try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                micAudioFile = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: format.isInterleaved)
+                // Create file using format directly to ensure channel layout matches buffer structure
+                micAudioFile = try AVAudioFile(forWriting: fileURL, format: format)
                 micFormat = format
                 print("✅ Created mic audio file: \(fileURL.lastPathComponent)")
             } catch {
@@ -87,6 +88,10 @@ class AudioRecordingManager: ObservableObject {
         // Write buffer to file
         if let file = micAudioFile {
             do {
+                // Validate buffer format matches file format to avoid channel mismatch errors
+                if buffer.format.channelCount != file.processingFormat.channelCount {
+                    print("⚠️ Buffer channel count (\(buffer.format.channelCount)) doesn't match file format (\(file.processingFormat.channelCount)). This may cause errors.")
+                }
                 try file.write(from: buffer)
             } catch {
                 print("❌ Failed to write mic audio buffer: \(error)")
@@ -112,7 +117,8 @@ class AudioRecordingManager: ObservableObject {
                 ]
                 
                 try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                systemAudioFile = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: format.isInterleaved)
+                // Create file using format directly to ensure channel layout matches buffer structure
+                systemAudioFile = try AVAudioFile(forWriting: fileURL, format: format)
                 systemFormat = format
                 print("✅ Created system audio file: \(fileURL.lastPathComponent)")
             } catch {
@@ -123,6 +129,10 @@ class AudioRecordingManager: ObservableObject {
         // Write buffer to file
         if let file = systemAudioFile {
             do {
+                // Validate buffer format matches file format to avoid channel mismatch errors
+                if buffer.format.channelCount != file.processingFormat.channelCount {
+                    print("⚠️ Buffer channel count (\(buffer.format.channelCount)) doesn't match file format (\(file.processingFormat.channelCount)). This may cause errors.")
+                }
                 try file.write(from: buffer)
             } catch {
                 print("❌ Failed to write system audio buffer: \(error)")
