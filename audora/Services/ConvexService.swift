@@ -12,7 +12,7 @@ class ConvexService {
     private var convexClient: ConvexClient?
     
     private init() {
-        // Initialize Convex client with deployment URL
+        // Initialize Convex client with deployment URL 
         // TODO: Replace with actual Convex deployment URL from environment/config
         if let deploymentURL = getConvexDeploymentURL() {
             convexClient = ConvexClient(deploymentUrl: deploymentURL)
