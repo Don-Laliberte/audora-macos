@@ -137,6 +137,15 @@ class LocalStorageManager {
     /// - Returns: True if successful, false otherwise
     func deleteAllMeetings() -> Bool {
         do {
+            // First, load all meetings to get their IDs so we can delete audio files
+            let meetings = loadMeetings()
+            
+            // Delete audio files for each meeting
+            for meeting in meetings {
+                AudioRecordingManager.shared.deleteAudioFiles(for: meeting.id)
+            }
+            
+            // Then delete all JSON files
             let fileURLs = try FileManager.default.contentsOfDirectory(at: meetingsDirectory,
                                                                       includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "json" }
@@ -145,7 +154,7 @@ class LocalStorageManager {
                 try FileManager.default.removeItem(at: fileURL)
             }
 
-            print("✅ Deleted all \(fileURLs.count) meetings")
+            print("✅ Deleted all \(fileURLs.count) meetings and their audio files")
             return true
         } catch {
             print("❌ Failed to delete all meetings: \(error)")
