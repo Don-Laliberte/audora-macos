@@ -101,7 +101,20 @@ class MeetingListViewModel: ObservableObject {
 
     func createMeeting(from event: EKEvent) -> Meeting {
         // Check if a meeting already exists for this calendar event
+        // Search in both the current meetings list and storage to be thorough
         if let existingMeeting = meetings.first(where: { $0.calendarEventId == event.eventIdentifier }) {
+            print("✅ Found existing meeting for calendar event: \(event.eventIdentifier)")
+            return existingMeeting
+        }
+        
+        // Also check in storage in case it wasn't loaded yet
+        let allMeetings = LocalStorageManager.shared.loadMeetings()
+        if let existingMeeting = allMeetings.first(where: { $0.calendarEventId == event.eventIdentifier }) {
+            print("✅ Found existing meeting in storage for calendar event: \(event.eventIdentifier)")
+            // Add to current list if not already there
+            if !meetings.contains(where: { $0.id == existingMeeting.id }) {
+                meetings.insert(existingMeeting, at: 0)
+            }
             return existingMeeting
         }
 
@@ -126,7 +139,19 @@ class MeetingListViewModel: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             let loadedMeetings = LocalStorageManager.shared.loadMeetings()
             print("📋 Loaded \(loadedMeetings.count) meetings")
-            self?.meetings = loadedMeetings
+            
+            // Deduplicate meetings by ID (in case of any data corruption or duplicate saves)
+            var seenIds = Set<UUID>()
+            let uniqueMeetings = loadedMeetings.filter { meeting in
+                if seenIds.contains(meeting.id) {
+                    print("⚠️ Found duplicate meeting with ID: \(meeting.id)")
+                    return false
+                }
+                seenIds.insert(meeting.id)
+                return true
+            }
+            
+            self?.meetings = uniqueMeetings
             self?.isLoading = false
         }
     }

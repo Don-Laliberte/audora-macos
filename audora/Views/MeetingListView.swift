@@ -115,7 +115,7 @@ struct MeetingListView: View {
                 }
             }
             .overlay {
-                if viewModel.filteredMeetings.isEmpty && !viewModel.isLoading {
+                if viewModel.filteredMeetings.isEmpty && viewModel.upcomingEvents.isEmpty && !viewModel.isLoading {
                     ContentUnavailableView(
                         viewModel.searchText.isEmpty ? "No Meetings Yet" : "No Results",
                         systemImage: viewModel.searchText.isEmpty ? "mic.slash" : "magnifyingglass",
@@ -502,7 +502,28 @@ struct MeetingDetailContentView: View {
 
             // Audio Player (fixed at top)
             if let audioFileURLString = viewModel.meeting.audioFileURL {
-                AudioPlayerView(audioURL: URL(fileURLWithPath: audioFileURLString))
+                let audioURL = URL(fileURLWithPath: audioFileURLString)
+                // Verify file exists before showing player
+                if FileManager.default.fileExists(atPath: audioURL.path) {
+                    AudioPlayerView(audioURL: audioURL)
+                } else {
+                    // File path exists in meeting but file not found - might be deleted or path is wrong
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("Audio file not found")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Path: \(audioFileURLString)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(12)
+                }
             }
             // Transcript Section
             transcriptSection

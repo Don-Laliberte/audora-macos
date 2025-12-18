@@ -69,6 +69,11 @@ class MeetingViewModel: ObservableObject {
         // Load the latest version of the meeting from storage if it exists
         if let savedMeeting = LocalStorageManager.shared.loadMeetings().first(where: { $0.id == meeting.id }) {
             print("🔄 Loading latest version of meeting: \(meeting.id)")
+            print("   audioFileURL: \(savedMeeting.audioFileURL ?? "nil")")
+            if let audioPath = savedMeeting.audioFileURL {
+                let fileExists = FileManager.default.fileExists(atPath: audioPath)
+                print("   File exists: \(fileExists)")
+            }
             self.meeting = savedMeeting
         } else {
             print("🆕 Using provided meeting: \(meeting.id)")
@@ -151,7 +156,30 @@ class MeetingViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-
+        // Listen for meeting saved notifications to update audioFileURL (e.g., when recording stops)
+        NotificationCenter.default.publisher(for: .meetingSaved)
+            .compactMap { $0.object as? Meeting }
+            .filter { [weak self] savedMeeting in
+                // Only process if it's for this meeting
+                savedMeeting.id == self?.meeting.id
+            }
+            .sink { [weak self] savedMeeting in
+                guard let self = self else { return }
+                // Update audioFileURL if it was added/updated
+                if savedMeeting.audioFileURL != self.meeting.audioFileURL {
+                    print("🔄 Updating audioFileURL in MeetingViewModel")
+                    print("   Old: \(self.meeting.audioFileURL ?? "nil")")
+                    print("   New: \(savedMeeting.audioFileURL ?? "nil")")
+                    
+                    if let newPath = savedMeeting.audioFileURL {
+                        let fileExists = FileManager.default.fileExists(atPath: newPath)
+                        print("   File exists: \(fileExists)")
+                    }
+                    
+                    self.meeting.audioFileURL = savedMeeting.audioFileURL
+                }
+            }
+            .store(in: &cancellables)
 
         // Auto-save when meeting properties change
         $meeting
