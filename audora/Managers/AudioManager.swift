@@ -478,8 +478,15 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         try tap.run(on: tapQueue) { [weak self] _, inInputData, _, _, _ in
-            guard let self = self,
-                  let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inInputData, deallocator: nil) else {
+            guard let self = self else { return }
+            
+            // Check if tap is still active before processing
+            guard self.isTapActive, self.processTap === tap else {
+                // Tap was invalidated, stop processing
+                return
+            }
+            
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inInputData, deallocator: nil) else {
                 return
             }
 
@@ -510,17 +517,23 @@ class AudioManager: NSObject, ObservableObject {
 
             self.processAudioBuffer(buffer, converter: converter, targetFormat: targetFormat, source: .system)
 
-        } invalidationHandler: { [weak self] _ in
+        } invalidationHandler: { [weak self] invalidatedTap in
             guard let self else { return }
             print("Audio tap was invalidated.")
-
-            if !self.isRestartingSystemTap {
+            
+            // Mark tap as inactive immediately to prevent further processing
+            self.isTapActive = false
+            
+            // Only restart if this was unexpected and we're still recording
+            if !self.isRestartingSystemTap && self.isRecording {
                 print("Tap invalidated unexpectedly. Restarting system audio tap.")
-                Task {
+                Task { @MainActor in
+                    // Small delay to let Core Audio clean up
+                    try? await Task.sleep(for: .milliseconds(100))
                     await self.restartSystemAudioTap()
                 }
             } else {
-                print("Tap invalidated as part of a restart. Not stopping recording.")
+                print("Tap invalidated as part of a restart or recording stopped. Not restarting.")
             }
         }
     }

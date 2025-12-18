@@ -54,41 +54,132 @@ class ConvexService {
         }
         
         print("📤 Uploading audio file to Convex: \(audioFileURL.lastPathComponent) (\(audioData.count) bytes)")
+        print("   🔗 Convex deployment: \(getConvexDeploymentURL() ?? "not configured")")
         
         // Step 1: Generate an upload URL via Convex mutation
         let uploadUrl: String
         do {
-            // TODO: Replace "audio:generateUploadUrl" with the actual mutation name from your Convex backend
-            let result = try await client.mutation("audio:generateUploadUrl", with: [:])
-            if let urlString = result as? String {
-                uploadUrl = urlString
-            } else if let resultDict = result as? [String: Any],
-                      let urlString = resultDict["uploadUrl"] as? String {
-                uploadUrl = urlString
-            } else {
-                throw ConvexError.uploadFailed("Invalid response from generateUploadUrl mutation")
+            print("   📞 Calling mutation: audio:generateUploadUrl")
+            
+            // Try explicit String type casting - ConvexMobile SDK may need this
+            // First try with explicit String type
+            do {
+                let result: String = try await client.mutation("audio:generateUploadUrl", with: [:])
+                uploadUrl = result
+                print("   ✅ Mutation returned String directly: \(uploadUrl)")
+            } catch {
+                // If explicit String casting fails, try Any and parse
+                print("   ⚠️ Explicit String casting failed, trying Any type...")
+                let result: Any = try await client.mutation("audio:generateUploadUrl", with: [:])
+                print("   ✅ Mutation response received")
+                print("   📋 Response type: \(type(of: result))")
+                print("   📋 Response value: \(result)")
+                print("   📋 Response is Void: \(result is Void)")
+                print("   📋 Response is Void.Type: \(type(of: result) == Void.self)")
+                
+                // Check if result is Void/empty tuple - this means mutation isn't returning anything
+                if type(of: result) == Void.self || String(describing: result) == "()" {
+                    print("   ❌ Mutation returned Void/empty")
+                    print("   💡 The mutation works in dashboard but SDK returns void")
+                    print("   💡 This might be a ConvexMobile SDK version or API issue")
+                    print("   💡 Try updating ConvexMobile SDK or check SDK documentation")
+                    throw ConvexError.uploadFailed("Mutation returned void - SDK may need update or different API call")
+                }
+                
+                // Try multiple ways to extract the URL string
+                if let urlString = result as? String {
+                    uploadUrl = urlString
+                    print("   ✅ Extracted URL as String: \(urlString)")
+                } else if let resultDict = result as? [String: Any] {
+                    print("   📋 Response is a dictionary with keys: \(resultDict.keys.joined(separator: ", "))")
+                    // Try common key names
+                    if let urlString = resultDict["uploadUrl"] as? String {
+                        uploadUrl = urlString
+                    } else if let urlString = resultDict["url"] as? String {
+                        uploadUrl = urlString
+                    } else if let urlString = resultDict["value"] as? String {
+                        uploadUrl = urlString
+                    } else {
+                        // Log the entire dictionary for debugging
+                        print("   ❌ Dictionary doesn't contain expected keys. Full response: \(resultDict)")
+                        throw ConvexError.uploadFailed("Invalid response format: dictionary doesn't contain uploadUrl, url, or value keys")
+                    }
+                } else if let resultArray = result as? [Any], let firstItem = resultArray.first as? String {
+                    // Handle array response (unlikely but possible)
+                    uploadUrl = firstItem
+                    print("   ✅ Extracted URL from array: \(uploadUrl)")
+                } else {
+                    // Last resort: try to extract URL from string representation
+                    let resultDescription = String(describing: result)
+                    print("   ⚠️ Trying to extract URL from string representation: \(resultDescription)")
+                    
+                    // Check if the string representation contains a URL
+                    if resultDescription.hasPrefix("http://") || resultDescription.hasPrefix("https://") {
+                        uploadUrl = resultDescription
+                        print("   ✅ Extracted URL from string representation: \(uploadUrl)")
+                    } else {
+                        print("   ❌ Unexpected response type. Description: \(resultDescription)")
+                        print("   💡 The mutation might not be returning a string URL as expected")
+                        print("   💡 Check that 'audio:generateUploadUrl' mutation exists and returns a string")
+                        throw ConvexError.uploadFailed("Invalid response format: expected String or [String: Any], got \(type(of: result)). Value: \(resultDescription)")
+                    }
+                }
             }
         } catch {
             print("❌ Failed to generate upload URL: \(error)")
+            print("   💡 Troubleshooting:")
+            print("      - Check if 'audio:generateUploadUrl' mutation exists in Convex Functions")
+            print("      - Verify CONVEX_DEPLOYMENT_URL matches your Convex dashboard")
+            print("      - Ensure mutation is deployed (run 'npx convex dev' if using CLI)")
             throw ConvexError.uploadFailed("Failed to generate upload URL: \(error.localizedDescription)")
         }
+        
+        print("   📤 Upload URL generated: \(uploadUrl)")
         
         // Step 2: Upload the file to the generated URL
         guard let url = URL(string: uploadUrl) else {
             throw ConvexError.uploadFailed("Invalid upload URL")
         }
         
+        // Determine content type based on file extension
+        let fileExtension = audioFileURL.pathExtension.lowercased()
+        let contentType: String
+        switch fileExtension {
+        case "m4a":
+            contentType = "audio/m4a"
+        case "mp3":
+            contentType = "audio/mpeg"
+        case "wav":
+            contentType = "audio/wav"
+        case "aac":
+            contentType = "audio/aac"
+        case "ogg", "oga":
+            contentType = "audio/ogg"
+        case "flac":
+            contentType = "audio/flac"
+        default:
+            contentType = "audio/m4a" // Default to m4a for unknown audio extensions
+        }
+        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("\(audioData.count)", forHTTPHeaderField: "Content-Length")
         
         do {
+            print("   📡 Uploading file to Convex storage...")
             let (data, response) = try await URLSession.shared.upload(for: request, from: audioData)
             
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                throw ConvexError.uploadFailed("Upload failed with status code: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw ConvexError.uploadFailed("Invalid response type")
+            }
+            
+            print("   📊 HTTP Status: \(httpResponse.statusCode)")
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode"
+                print("   ❌ Upload failed. Response body: \(responseBody)")
+                throw ConvexError.uploadFailed("Upload failed with status code: \(httpResponse.statusCode)")
             }
             
             // Step 3: Parse the response to get the storage ID
