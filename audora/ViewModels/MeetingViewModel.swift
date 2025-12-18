@@ -10,6 +10,7 @@ extension Notification.Name {
     static let createNewRecording = Notification.Name("CreateNewRecording")
     static let openSettings = Notification.Name("OpenSettings")
     static let onboardingReset = Notification.Name("OnboardingReset")
+    static let meetingsDeleted = Notification.Name("com.audora.notification.meetingsDeleted")
 }
 
 enum MeetingViewTab: String, CaseIterable {
@@ -161,20 +162,6 @@ class MeetingViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Listen for meeting saved notifications to reload the meeting (e.g., when audioFileURL is added)
-        NotificationCenter.default.publisher(for: .meetingSaved)
-            .sink { [weak self] notification in
-                guard let self = self,
-                      let savedMeeting = notification.object as? Meeting,
-                      savedMeeting.id == self.meeting.id else { return }
-                
-                print("🔄 Reloading meeting from storage to get updated audioFileURL")
-                // Reload the meeting from storage to get the latest version with audioFileURL
-                if let latestMeeting = LocalStorageManager.shared.loadMeetings().first(where: { $0.id == self.meeting.id }) {
-                    self.meeting = latestMeeting
-                }
-            }
-            .store(in: &cancellables)
 
     }
 
@@ -224,31 +211,31 @@ class MeetingViewModel: ObservableObject {
 
     func stopRecording() {
         recordingSessionManager.stopRecording()
-        
+
         // Calculate analytics after stopping recording
         calculateAnalytics()
-        
+
         saveMeeting()
     }
-    
+
     /// Calculate speech analytics from transcript chunks
     private func calculateAnalytics() {
         guard !meeting.transcriptChunks.isEmpty else {
             print("⚠️ No transcript chunks to analyze")
             return
         }
-        
+
         // Calculate duration in minutes
         let chunks = meeting.transcriptChunks
         guard let firstChunk = chunks.first, let lastChunk = chunks.last else {
             return
         }
-        
+
         let durationSeconds = lastChunk.timestamp.timeIntervalSince(firstChunk.timestamp)
         let durationMinutes = max(durationSeconds / 60.0, 0.1) // Minimum 0.1 minutes
-        
+
         print("📊 Calculating analytics for \(chunks.count) chunks, duration: \(String(format: "%.1f", durationMinutes)) min")
-        
+
         // Calculate analytics
         if let analytics = AnalyticsCalculator.analyzeTranscript(
             chunks: chunks,
@@ -259,7 +246,7 @@ class MeetingViewModel: ObservableObject {
             print("   Clarity: \(analytics.scores.clarity)")
             print("   Conciseness: \(analytics.scores.conciseness)")
             print("   Confidence: \(analytics.scores.confidence)")
-            
+
             // Switch to analytics tab to show results
             selectedTab = .analytics
         } else {

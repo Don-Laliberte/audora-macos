@@ -275,7 +275,7 @@ final class ProcessTap {
 
 }
 
-private extension AudioDeviceID {
+extension AudioDeviceID {
     func getTotalOutputChannelCount() throws -> UInt32 {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,

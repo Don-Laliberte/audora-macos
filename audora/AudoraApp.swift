@@ -8,16 +8,19 @@
 import SwiftUI
 import Sparkle
 import PostHog
+import EventKit
+import Combine
 
 @main
 struct AudoraApp: App {
     private let updaterController: SPUStandardUpdaterController
     @StateObject private var settingsViewModel = SettingsViewModel()
+    @StateObject private var menuBarViewModel = MenuBarViewModel()
 
     init() {
         updaterController = SPUStandardUpdaterController(updaterDelegate: nil, userDriverDelegate: nil)
         // Setup PostHog analytics for anonymous tracking
-        let posthogAPIKey = "phc_Wt8sWUzUF7YPF50aQ0B1qbfA5SJWWR341zmXCaIaIRJ"
+        let posthogAPIKey = "phc_6y4KXMabWzGL2UJIK8RoGJt9QCGTU8R1yuJ8OVRp5IV"
         let posthogHost = "https://us.i.posthog.com"
         let config = PostHogConfig(apiKey: posthogAPIKey, host: posthogHost)
         // Only capture anonymous events
@@ -32,6 +35,15 @@ struct AudoraApp: App {
         #else
         PostHogSDK.shared.register(["environment": "prod"] )
         #endif
+
+        // Start meeting app detection
+        MeetingAppDetector.shared.startMonitoring()
+        MeetingAppDetector.shared.onOpenSettings = {}
+
+        // Initialize managers
+        _ = NotificationManager.shared
+        // Ensure launch at login state is consistent (optional, but good practice)
+        // LaunchAtLoginManager.shared.setLaunchAtLogin(enabled: UserDefaultsManager.shared.launchAtLogin)
     }
 
     var body: some Scene {
@@ -39,13 +51,18 @@ struct AudoraApp: App {
             ContentView()
                 .frame(minWidth: 700, minHeight: 400)
                 .environmentObject(settingsViewModel)
+                .background(OpenSettingsInstaller())
         }
         .handlesExternalEvents(matching: ["main-window"])
         .windowResizability(.contentSize)
         .defaultSize(width: 1000, height: 600)
 
+        SwiftUI.Settings {
+            SettingsView(viewModel: settingsViewModel)
+        }
+
         // Menu bar extra
-        MenuBarExtra("Audora", systemImage: "bolt.fill") {
+        MenuBarExtra(content: {
             Button("New Recording") {
                 // This would need to be coordinated with the app state
                 NotificationCenter.default.post(name: .createNewRecording, object: nil)
@@ -54,41 +71,19 @@ struct AudoraApp: App {
 
             Divider()
 
-            Toggle("Auto-Recording", isOn: Binding(
-                get: { settingsViewModel.settings.autoRecordingEnabled },
-                set: { newValue in
-                    settingsViewModel.settings.autoRecordingEnabled = newValue
-                    if newValue {
-                        AudioManager.shared.enableAutoRecording()
-                    } else {
-                        AudioManager.shared.disableAutoRecording()
-                    }
-                }
-            ))
-            .keyboardShortcut("a", modifiers: [.command, .shift])
+            if let nextEvent = menuBarViewModel.nextEvent {
+                Text("Next: \(nextEvent.title)")
+                Text(nextEvent.startDate, style: .relative)
+                Divider()
+            }
 
-            Toggle("Mic Following Mode", isOn: Binding(
-                get: { settingsViewModel.settings.micFollowingEnabled },
-                set: { newValue in
-                    settingsViewModel.settings.micFollowingEnabled = newValue
-                    if newValue {
-                        AudioManager.shared.enableMicFollowing()
-                    } else {
-                        AudioManager.shared.disableMicFollowing()
-                    }
-                }
-            ))
-            .keyboardShortcut("m", modifiers: [.command, .shift])
-
-            Divider()
-
-            Button("Open Settings...") {
-                NotificationCenter.default.post(name: .openSettings, object: nil)
+            SettingsLink {
+                Text("Open Settings...")
             }
             .keyboardShortcut(",", modifiers: .command)
 
             Divider()
-            
+
             CheckForUpdatesView(updater: updaterController.updater)
 
             Divider()
@@ -99,10 +94,50 @@ struct AudoraApp: App {
 
             Link("Privacy Policy", destination: URL(string: "https://audora.psycho-baller.com/privacy")!)
 
-            Button("Quit MyApp") {
+            Button("Quit Audora") {
                 NSApp.terminate(nil)
             }
-        }
+        }, label: {
+            if menuBarViewModel.showUpcomingInMenuBar, let nextEvent = menuBarViewModel.nextEvent {
+                HStack {
+                    Image(systemName: "bolt.fill")
+                    Text(nextEvent.title)
+                }
+            } else {
+                Image(systemName: "bolt.fill")
+            }
+        })
+    }
+}
+
+class MenuBarViewModel: ObservableObject {
+    @Published var nextEvent: EKEvent?
+    @Published var showUpcomingInMenuBar: Bool = true
+
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        // Subscribe to calendar updates
+        CalendarManager.shared.$nextEvent
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$nextEvent)
+
+        // Initial load
+        showUpcomingInMenuBar = UserDefaultsManager.shared.showUpcomingInMenuBar
+
+        // Observe UserDefaults changes reactively instead of polling
+        UserDefaults.standard.publisher(for: \.showUpcomingInMenuBar)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newValue in
+                self?.showUpcomingInMenuBar = newValue
+            }
+            .store(in: &cancellables)
+    }
+}
+
+extension UserDefaults {
+    @objc dynamic var showUpcomingInMenuBar: Bool {
+        return bool(forKey: "showUpcomingInMenuBar")
     }
 }
 
@@ -122,5 +157,21 @@ struct CheckForUpdatesView: View {
             updater.checkForUpdates()
         }
         .keyboardShortcut("u", modifiers: .command)
+    }
+}
+
+private struct OpenSettingsInstaller: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Color.clear
+            .onAppear {
+                MeetingAppDetector.shared.onOpenSettings = { openSettings() }
+            }
+            .onDisappear {
+                // Avoid holding onto an environment action after the view goes away
+                MeetingAppDetector.shared.onOpenSettings = {}
+            }
+            .accessibilityHidden(true)
     }
 }
