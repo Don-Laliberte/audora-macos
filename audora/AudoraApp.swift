@@ -37,8 +37,7 @@ struct AudoraApp: App {
             print("🔐 [Clerk Init] Configuring with key: \(clerkKey.prefix(20))...")
             Clerk.shared.configure(publishableKey: clerkKey)
             print("🔐 [Clerk Init] ✅ Configuration complete")
-            print("   - Clerk.shared.user: \(Clerk.shared.user != nil ? "exists" : "nil")")
-            print("   - Clerk.shared.session: \(Clerk.shared.session != nil ? "exists" : "nil")")
+            // Note: Session will be loaded in loginFromCache() to avoid race condition
         } else {
             print("🔐 [Clerk Init] ⚠️ NO PUBLISHABLE KEY FOUND!")
             print("   - Make sure Config.xcconfig has CLERK_PUBLISHABLE_KEY set")

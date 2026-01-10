@@ -31,18 +31,30 @@ class ConvexService: ObservableObject {
         } else {
             print("⚠️ Convex deployment URL not configured")
         }
-
-        authState = .unauthenticated
+        // Keep authState as .loading until loginFromCache() completes
     }
 
     /// Gets the Convex deployment URL from environment or configuration
     private func getConvexDeploymentURL() -> String? {
-        if let url = ProcessInfo.processInfo.environment["CONVEX_DEPLOYMENT_URL"], !url.isEmpty {
+        print("🔍 [ConvexService] Looking for CONVEX_DEPLOYMENT_URL...")
+
+        // Check environment variable
+        let envUrl = ProcessInfo.processInfo.environment["CONVEX_DEPLOYMENT_URL"]
+        print("   - Environment: \(envUrl ?? "not found")")
+
+        if let url = envUrl, !url.isEmpty {
             return url
         }
-        if let url = Bundle.main.object(forInfoDictionaryKey: "CONVEX_DEPLOYMENT_URL") as? String, !url.isEmpty {
+
+        // Check Info.plist
+        let plistUrl = Bundle.main.object(forInfoDictionaryKey: "CONVEX_DEPLOYMENT_URL") as? String
+        print("   - Info.plist: \(plistUrl ?? "not found")")
+
+        if let url = plistUrl, !url.isEmpty, url != "$(CONVEX_DEPLOYMENT_URL)" {
             return url
         }
+
+        print("   ⚠️ CONVEX_DEPLOYMENT_URL not found!")
         return nil
     }
 
@@ -50,14 +62,29 @@ class ConvexService: ObservableObject {
 
     /// Attempts to restore session from Clerk on app launch
     func loginFromCache() async -> Bool {
-        // Check if Clerk has an active session
-        if Clerk.shared.session != nil {
-            // Get the user info from Clerk
+        print("🔐 [ConvexService] loginFromCache() called")
+
+        // First, ensure Clerk has loaded its saved session
+        print("   - Calling Clerk.shared.load()...")
+        do {
+            try await Clerk.shared.load()
+            print("   - Clerk.load() completed")
+        } catch {
+            print("   ⚠️ Clerk.load() failed: \(error)")
+        }
+
+        // Check for session
+        print("   - Checking for session...")
+        if let session = Clerk.shared.session {
+            print("   ✅ Session found: \(session.id)")
             if let user = Clerk.shared.user {
+                print("   ✅ User found: \(user.id)")
                 authState = .authenticated(userId: user.id)
                 return true
             }
         }
+
+        print("   ⚠️ No session found")
         authState = .unauthenticated
         return false
     }
