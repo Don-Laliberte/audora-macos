@@ -220,6 +220,24 @@ class ConvexService {
     func isConfigured() -> Bool {
         return convexClient != nil
     }
+
+    /// Generates an ephemeral OpenAI Realtime session token
+    /// - Returns: The session configuration object (including client_secret/token)
+    func generateOpenAISession() async throws -> [String: Any] {
+        guard let client = convexClient else {
+            throw ConvexError.clientNotInitialized
+        }
+
+        print("🔑 Fetching ephemeral OpenAI session from backend...")
+        let result: Any = try await client.action("realtime:generateSession", with: [:])
+
+        if let sessionData = result as? [String: Any] {
+            print("   ✅ Session fetched successfully")
+            return sessionData
+        } else {
+            throw ConvexError.netError("Invalid session response format")
+        }
+    }
 }
 
 // MARK: - Convex Errors
@@ -228,6 +246,7 @@ enum ConvexError: LocalizedError {
     case clientNotInitialized
     case fileReadFailed
     case uploadFailed(String)
+    case netError(String)
 
     var errorDescription: String? {
         switch self {
@@ -237,6 +256,8 @@ enum ConvexError: LocalizedError {
             return "Failed to read audio file for upload."
         case .uploadFailed(let message):
             return "Failed to upload audio file: \(message)"
+        case .netError(let message):
+            return "Network error: \(message)"
         }
     }
 }

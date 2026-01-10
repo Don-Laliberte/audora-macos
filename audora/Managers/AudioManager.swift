@@ -50,6 +50,9 @@ class AudioManager: NSObject, ObservableObject {
     // Session refresh timers to prevent 30-minute expiry
     private var sessionRefreshTimers: [AudioSource: Timer] = [:]
 
+    // Add reference to ConvexService
+    var convexService: ConvexService?
+
 
     private override init() {
         super.init()
@@ -339,7 +342,7 @@ class AudioManager: NSObject, ObservableObject {
 
         // Get all running processes that are producing audio
         let allProcessObjectIDs = audioProcessController.processes.map { $0.objectID }
-        
+
         // Provide better diagnostics
         print("📊 Found \(allProcessObjectIDs.count) audio-producing process(es)")
         if allProcessObjectIDs.isEmpty {
@@ -358,7 +361,7 @@ class AudioManager: NSObject, ObservableObject {
         // Check for activation errors
         if let tapError = newTap.errorMessage {
             var errorMsg = "Failed to activate system audio tap: \(tapError)"
-            
+
             // Provide helpful guidance based on error
             if tapError.contains("error 560947818") || tapError.contains("error -536870206") {
                 errorMsg += "\n\n💡 This usually means:\n"
@@ -369,7 +372,7 @@ class AudioManager: NSObject, ObservableObject {
             } else if allProcessObjectIDs.isEmpty {
                 errorMsg += "\n\n💡 No audio-producing apps detected. Start a meeting app (Zoom, Teams, etc.) first."
             }
-            
+
             print("❌ \(errorMsg)")
             self.errorMessage = errorMsg
             if !isRestart { stopRecording() }
@@ -479,13 +482,13 @@ class AudioManager: NSObject, ObservableObject {
 
         try tap.run(on: tapQueue) { [weak self] _, inInputData, _, _, _ in
             guard let self = self else { return }
-            
+
             // Check if tap is still active before processing
             guard self.isTapActive, self.processTap === tap else {
                 // Tap was invalidated, stop processing
                 return
             }
-            
+
             guard let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inInputData, deallocator: nil) else {
                 return
             }
@@ -520,10 +523,10 @@ class AudioManager: NSObject, ObservableObject {
         } invalidationHandler: { [weak self] invalidatedTap in
             guard let self else { return }
             print("Audio tap was invalidated.")
-            
+
             // Mark tap as inactive immediately to prevent further processing
             self.isTapActive = false
-            
+
             // Only restart if this was unexpected and we're still recording
             if !self.isRestartingSystemTap && self.isRecording {
                 print("Tap invalidated unexpectedly. Restarting system audio tap.")
@@ -612,20 +615,46 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     private func connectToOpenAIRealtime(source: AudioSource) {
-        guard let key = KeychainHelper.shared.getAPIKey(), !key.isEmpty else {
-            let errorMsg = ErrorMessage.noAPIKey
-            print("❌ \(errorMsg)")
-            DispatchQueue.main.async {
-                self.errorMessage = errorMsg
-            }
-            return
-        }
 
+
+        // Use Convex Service to fetch ephemeral session token
         let session = URLSession(configuration: .default)
         var request = URLRequest(url: realtimeURL)
-        request.addValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.addValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
 
+        // Fetch session token asynchronously
+        Task { [weak self] in
+            guard let self = self else { return }
+
+            do {
+                if let convexService = self.convexService {
+                    let sessionData = try await convexService.generateOpenAISession()
+                    if let clientSecret = sessionData["client_secret"] as? [String: Any],
+                       let token = clientSecret["value"] as? String {
+                        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    } else if let token = sessionData["client_secret"] as? String {
+                        // Handle potential direct string return
+                         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    } else {
+                         throw NSError(domain: "AudioManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid session token format"])
+                    }
+                } else {
+                     throw NSError(domain: "AudioManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Convex Service not initialized"])
+                }
+                request.addValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
+
+                await self.establishConnection(request: request, session: session, source: source)
+
+            } catch {
+                let errorMsg = "\(ErrorMessage.configurationFailed): \(ErrorHandler.shared.handleError(error))"
+                print("❌ \(errorMsg)")
+                await MainActor.run {
+                    self.errorMessage = errorMsg
+                }
+            }
+        }
+    }
+
+    private func establishConnection(request: URLRequest, session: URLSession, source: AudioSource) async {
         let task = session.webSocketTask(with: request)
 
         // Add connection monitoring
@@ -1000,8 +1029,69 @@ class AudioManager: NSObject, ObservableObject {
                     }
                 }
             }
+        case "response.function_call_arguments.done":
+             // Handle tool calls (e.g., notify_user)
+             if let name = json["name"] as? String, name == "notify_user",
+                let argsStr = json["arguments"] as? String,
+                let argsData = argsStr.data(using: .utf8),
+                let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any],
+                let message = args["message"] as? String {
+
+                 let feedbackType = args["type"] as? String ?? "alert"
+                 print("🔔 Feedback Received: \(message) (\(feedbackType))")
+
+                 DispatchQueue.main.async {
+                     // TODO: Post notification to UI
+                     // NotificationCenter.default.post(name: .realtimeFeedbackReceived, object: nil, userInfo: ["message": message, "type": feedbackType])
+
+                     // For now, repurpose errorMessage if it's an alert, or just log
+                     if feedbackType == "alert" {
+                         // Non-blocking toast or banner would be better
+                         print("⚠️ USER ALERT: \(message)")
+                     }
+                 }
+
+                 // Create tool output to satisfy the model's turn loop (required by OpenAI Realtime)
+                 if let callId = json["call_id"] as? String {
+                     self.sendToolOutput(callId: callId, output: "Notification sent", source: source)
+                 }
+             }
         default:
             break
+        }
+    }
+
+    private func sendToolOutput(callId: String, output: String, source: AudioSource) {
+         let message: [String: Any] = [
+             "type": "conversation.item.create",
+             "item": [
+                 "type": "function_call_output",
+                 "call_id": callId,
+                 "output": output
+             ]
+         ]
+         self.sendMessage(message, source: source)
+
+         // Trigger another response to continue the conversation if needed, or just acknowledge
+         let responseCreate: [String: Any] = ["type": "response.create"]
+         self.sendMessage(responseCreate, source: source)
+    }
+
+    private func sendMessage(_ message: [String: Any], source: AudioSource) {
+        let task: URLSessionWebSocketTask? = (source == .mic) ? micSocketTask : systemSocketTask
+        guard let socket = task, socket.state == .running else { return }
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: message)
+            if let jsonStr = String(data: jsonData, encoding: .utf8) {
+                socket.send(.string(jsonStr)) { error in
+                    if let error = error {
+                        print("❌ Failed to send message: \(error)")
+                    }
+                }
+            }
+        } catch {
+             print("❌ Failed to serialize message")
         }
     }
 
