@@ -122,6 +122,7 @@ Temporary Items
 APIKeys.swift
 .env
 .env.local
+Config.xcconfig
 
 releases/
 # Xcode

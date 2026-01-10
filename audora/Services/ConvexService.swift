@@ -1,5 +1,5 @@
 // ConvexService.swift
-// Handles interactions with Convex backend, including audio file uploads
+// Handles interactions with Convex backend, including audio file uploads and transcription
 
 import Foundation
 import ConvexMobile
@@ -13,7 +13,6 @@ class ConvexService {
 
     private init() {
         // Initialize Convex client with deployment URL
-        // TODO: Replace with actual Convex deployment URL from environment/config
         if let deploymentURL = getConvexDeploymentURL() {
             convexClient = ConvexClient(deploymentUrl: deploymentURL)
             print("✅ Convex client initialized with URL: \(deploymentURL)")
@@ -30,10 +29,97 @@ class ConvexService {
             return url
         }
 
-        // TODO: Add UserDefaults or config file support for deployment URL
-        // For now, return nil if not set
+        // Check Info.plist (set via xcconfig)
+        if let url = Bundle.main.object(forInfoDictionaryKey: "CONVEX_DEPLOYMENT_URL") as? String, !url.isEmpty {
+            return url
+        }
+
         return nil
     }
+
+    // MARK: - Authentication
+
+    /// Sets the authentication token for authenticated requests
+    /// - Parameter token: The Clerk session token
+    func setAuthToken(_ token: String) async {
+        await convexClient?.setAuth(token: token)
+        print("✅ Convex auth token set")
+    }
+
+    /// Clears the authentication token
+    func clearAuthToken() async {
+        await convexClient?.setAuth(token: nil)
+        print("✅ Convex auth token cleared")
+    }
+
+    // MARK: - Transcription
+
+    /// Gets a transcription session configuration from the backend
+    /// - Returns: WebSocket URL and configuration for real-time transcription
+    func getTranscriptionSession() async throws -> TranscriptionSessionConfig {
+        guard let client = convexClient else {
+            throw ConvexError.clientNotInitialized
+        }
+
+        print("🎙️ Fetching transcription session from backend...")
+        let result: Any = try await client.action("transcription:getSession", with: [:])
+
+        if let sessionData = result as? [String: Any],
+           let wsUrl = sessionData["wsUrl"] as? String {
+            print("   ✅ Transcription session received")
+            return TranscriptionSessionConfig(
+                wsUrl: wsUrl,
+                authToken: sessionData["authToken"] as? String,
+                config: sessionData["config"] as? [String: Any]
+            )
+        } else {
+            throw ConvexError.netError("Invalid transcription session response")
+        }
+    }
+
+    // MARK: - Notes Generation
+
+    /// Generates meeting notes using the backend AI service
+    /// - Parameters:
+    ///   - transcript: The meeting transcript text
+    ///   - templateId: Optional template ID for note generation
+    /// - Returns: AsyncThrowingStream of note content chunks
+    func generateNotes(transcript: String, templateId: String? = nil) -> AsyncThrowingStream<String, Error> {
+        return AsyncThrowingStream { continuation in
+            Task {
+                guard let client = self.convexClient else {
+                    continuation.finish(throwing: ConvexError.clientNotInitialized)
+                    return
+                }
+
+                do {
+                    var args: [String: Any] = ["transcript": transcript]
+                    if let templateId = templateId {
+                        args["templateId"] = templateId
+                    }
+
+                    print("📝 Generating notes via backend...")
+                    let result: Any = try await client.action("notes:generate", with: args)
+
+                    if let notes = result as? String {
+                        continuation.yield(notes)
+                        continuation.finish()
+                    } else if let notesData = result as? [String: Any],
+                              let content = notesData["content"] as? String {
+                        continuation.yield(content)
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: ConvexError.netError("Invalid notes response format"))
+                    }
+                } catch {
+                    print("❌ Notes generation failed: \(error)")
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    // MARK: - File Upload
 
     /// Uploads an audio file to Convex object storage
     /// - Parameters:
@@ -54,87 +140,16 @@ class ConvexService {
         }
 
         print("📤 Uploading audio file to Convex: \(audioFileURL.lastPathComponent) (\(audioData.count) bytes)")
-        print("   🔗 Convex deployment: \(getConvexDeploymentURL() ?? "not configured")")
 
         // Step 1: Generate an upload URL via Convex mutation
         let uploadUrl: String
         do {
-            print("   📞 Calling mutation: files:generateUploadUrl")
-
-            // Try explicit String type casting - ConvexMobile SDK may need this
-            // First try with explicit String type
-            do {
-                let result: String = try await client.mutation("files:generateUploadUrl", with: [:])
-                uploadUrl = result
-                print("   ✅ Mutation returned String directly: \(uploadUrl)")
-            } catch {
-                // If explicit String casting fails, try Any and parse
-                print("   ⚠️ Explicit String casting failed, trying Any type...")
-                let result: Any = try await client.mutation("files:generateUploadUrl", with: [:])
-                print("   ✅ Mutation response received")
-                print("   📋 Response type: \(type(of: result))")
-                print("   📋 Response value: \(result)")
-                print("   📋 Response is Void: \(result is Void)")
-                print("   📋 Response is Void.Type: \(type(of: result) == Void.self)")
-
-                // Check if result is Void/empty tuple - this means mutation isn't returning anything
-                if type(of: result) == Void.self || String(describing: result) == "()" {
-                    print("   ❌ Mutation returned Void/empty")
-                    print("   💡 The mutation works in dashboard but SDK returns void")
-                    print("   💡 This might be a ConvexMobile SDK version or API issue")
-                    print("   💡 Try updating ConvexMobile SDK or check SDK documentation")
-                    throw ConvexError.uploadFailed("Mutation returned void - SDK may need update or different API call")
-                }
-
-                // Try multiple ways to extract the URL string
-                if let urlString = result as? String {
-                    uploadUrl = urlString
-                    print("   ✅ Extracted URL as String: \(urlString)")
-                } else if let resultDict = result as? [String: Any] {
-                    print("   📋 Response is a dictionary with keys: \(resultDict.keys.joined(separator: ", "))")
-                    // Try common key names
-                    if let urlString = resultDict["uploadUrl"] as? String {
-                        uploadUrl = urlString
-                    } else if let urlString = resultDict["url"] as? String {
-                        uploadUrl = urlString
-                    } else if let urlString = resultDict["value"] as? String {
-                        uploadUrl = urlString
-                    } else {
-                        // Log the entire dictionary for debugging
-                        print("   ❌ Dictionary doesn't contain expected keys. Full response: \(resultDict)")
-                        throw ConvexError.uploadFailed("Invalid response format: dictionary doesn't contain uploadUrl, url, or value keys")
-                    }
-                } else if let resultArray = result as? [Any], let firstItem = resultArray.first as? String {
-                    // Handle array response (unlikely but possible)
-                    uploadUrl = firstItem
-                    print("   ✅ Extracted URL from array: \(uploadUrl)")
-                } else {
-                    // Last resort: try to extract URL from string representation
-                    let resultDescription = String(describing: result)
-                    print("   ⚠️ Trying to extract URL from string representation: \(resultDescription)")
-
-                    // Check if the string representation contains a URL
-                    if resultDescription.hasPrefix("http://") || resultDescription.hasPrefix("https://") {
-                        uploadUrl = resultDescription
-                        print("   ✅ Extracted URL from string representation: \(uploadUrl)")
-                    } else {
-                        print("   ❌ Unexpected response type. Description: \(resultDescription)")
-                        print("   💡 The mutation might not be returning a string URL as expected")
-                        print("   💡 Check that 'files:generateUploadUrl' mutation exists and returns a string")
-                        throw ConvexError.uploadFailed("Invalid response format: expected String or [String: Any], got \(type(of: result)). Value: \(resultDescription)")
-                    }
-                }
-            }
+            let result: String = try await client.mutation("files:generateUploadUrl", with: [:])
+            uploadUrl = result
         } catch {
             print("❌ Failed to generate upload URL: \(error)")
-            print("   💡 Troubleshooting:")
-            print("      - Check if 'files:generateUploadUrl' mutation exists in Convex Functions")
-            print("      - Verify CONVEX_DEPLOYMENT_URL matches your Convex dashboard")
-            print("      - Ensure mutation is deployed (run 'npx convex dev' if using CLI)")
             throw ConvexError.uploadFailed("Failed to generate upload URL: \(error.localizedDescription)")
         }
-
-        print("   📤 Upload URL generated: \(uploadUrl)")
 
         // Step 2: Upload the file to the generated URL
         guard let url = URL(string: uploadUrl) else {
@@ -145,20 +160,13 @@ class ConvexService {
         let fileExtension = audioFileURL.pathExtension.lowercased()
         let contentType: String
         switch fileExtension {
-        case "m4a":
-            contentType = "audio/m4a"
-        case "mp3":
-            contentType = "audio/mpeg"
-        case "wav":
-            contentType = "audio/wav"
-        case "aac":
-            contentType = "audio/aac"
-        case "ogg", "oga":
-            contentType = "audio/ogg"
-        case "flac":
-            contentType = "audio/flac"
-        default:
-            contentType = "audio/m4a" // Default to m4a for unknown audio extensions
+        case "m4a": contentType = "audio/m4a"
+        case "mp3": contentType = "audio/mpeg"
+        case "wav": contentType = "audio/wav"
+        case "aac": contentType = "audio/aac"
+        case "ogg", "oga": contentType = "audio/ogg"
+        case "flac": contentType = "audio/flac"
+        default: contentType = "audio/m4a"
         }
 
         var request = URLRequest(url: url)
@@ -167,46 +175,26 @@ class ConvexService {
         request.setValue("\(audioData.count)", forHTTPHeaderField: "Content-Length")
 
         do {
-            print("   📡 Uploading file to Convex storage...")
             let (data, response) = try await URLSession.shared.upload(for: request, from: audioData)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw ConvexError.uploadFailed("Invalid response type")
             }
 
-            print("   📊 HTTP Status: \(httpResponse.statusCode)")
-
             guard (200...299).contains(httpResponse.statusCode) else {
-                let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode"
-                print("   ❌ Upload failed. Response body: \(responseBody)")
                 throw ConvexError.uploadFailed("Upload failed with status code: \(httpResponse.statusCode)")
             }
 
-            // Step 3: Parse the response to get the storage ID
-            // The response should contain a JSON object with a storageId field
+            // Parse the response to get the storage ID
             if let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let storageId = jsonResponse["storageId"] as? String {
-                print("✅ Audio file uploaded successfully!")
-                print("   📁 Storage ID: \(storageId)")
-                print("   📊 File size: \(audioData.count) bytes (\(String(format: "%.2f", Double(audioData.count) / 1024 / 1024)) MB)")
-                print("   🔗 Verify in Convex Dashboard → Files section")
+                print("✅ Audio file uploaded successfully! Storage ID: \(storageId)")
                 return storageId
             } else if let responseString = String(data: data, encoding: .utf8),
-                      !responseString.isEmpty,
-                      responseString.hasPrefix("k") || responseString.count > 10 {
-                // Some Convex implementations return the storage ID directly as a string
-                // Storage IDs typically start with "k" and are long strings
+                      !responseString.isEmpty {
                 print("✅ Audio file uploaded successfully!")
-                print("   📁 Storage ID: \(responseString)")
-                print("   📊 File size: \(audioData.count) bytes (\(String(format: "%.2f", Double(audioData.count) / 1024 / 1024)) MB)")
-                print("   🔗 Verify in Convex Dashboard → Files section")
                 return responseString
             } else {
-                // Log the raw response for debugging
-                let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode"
-                print("⚠️ Upload succeeded but could not parse storage ID from response")
-                print("   Raw response: \(responseString)")
-                print("   Response length: \(data.count) bytes")
                 return nil
             }
         } catch {
@@ -220,24 +208,14 @@ class ConvexService {
     func isConfigured() -> Bool {
         return convexClient != nil
     }
+}
 
-    /// Generates an ephemeral OpenAI Realtime session token
-    /// - Returns: The session configuration object (including client_secret/token)
-    func generateOpenAISession() async throws -> [String: Any] {
-        guard let client = convexClient else {
-            throw ConvexError.clientNotInitialized
-        }
+// MARK: - Supporting Types
 
-        print("🔑 Fetching ephemeral OpenAI session from backend...")
-        let result: Any = try await client.action("realtime:generateSession", with: [:])
-
-        if let sessionData = result as? [String: Any] {
-            print("   ✅ Session fetched successfully")
-            return sessionData
-        } else {
-            throw ConvexError.netError("Invalid session response format")
-        }
-    }
+struct TranscriptionSessionConfig {
+    let wsUrl: String
+    let authToken: String?
+    let config: [String: Any]?
 }
 
 // MARK: - Convex Errors
@@ -247,6 +225,7 @@ enum ConvexError: LocalizedError {
     case fileReadFailed
     case uploadFailed(String)
     case netError(String)
+    case authenticationRequired
 
     var errorDescription: String? {
         switch self {
@@ -258,6 +237,8 @@ enum ConvexError: LocalizedError {
             return "Failed to upload audio file: \(message)"
         case .netError(let message):
             return "Network error: \(message)"
+        case .authenticationRequired:
+            return "Authentication required. Please sign in."
         }
     }
 }

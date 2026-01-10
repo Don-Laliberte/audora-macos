@@ -10,15 +10,23 @@ import Sparkle
 import PostHog
 import EventKit
 import Combine
+import ClerkSDK
 
 @main
 struct AudoraApp: App {
     private let updaterController: SPUStandardUpdaterController
     @StateObject private var settingsViewModel = SettingsViewModel()
     @StateObject private var menuBarViewModel = MenuBarViewModel()
+    @StateObject private var authService = AuthService.shared
 
     init() {
         updaterController = SPUStandardUpdaterController(updaterDelegate: nil, userDriverDelegate: nil)
+
+        // Configure Clerk
+        if let clerkKey = ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? Bundle.main.object(forInfoDictionaryKey: "CLERK_PUBLISHABLE_KEY") as? String {
+            Clerk.configure(publishableKey: clerkKey)
+        }
+
         // Setup PostHog analytics for anonymous tracking
         let posthogAPIKey = "phc_6y4KXMabWzGL2UJIK8RoGJt9QCGTU8R1yuJ8OVRp5IV"
         let posthogHost = "https://us.i.posthog.com"
@@ -42,17 +50,39 @@ struct AudoraApp: App {
 
         // Initialize managers
         _ = NotificationManager.shared
-        // Ensure launch at login state is consistent (optional, but good practice)
-        // LaunchAtLoginManager.shared.setLaunchAtLogin(enabled: UserDefaultsManager.shared.launchAtLogin)
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .frame(minWidth: 700, minHeight: 400)
-                .environmentObject(settingsViewModel)
-                .background(OpenSettingsInstaller())
+            Group {
+                if authService.isLoading {
+                    // Loading state
+                    VStack {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle())
+                        Text("Loading...")
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(minWidth: 400, minHeight: 300)
+                } else if authService.isSignedIn {
+                    // Main app
+                    ContentView()
+                        .frame(minWidth: 700, minHeight: 400)
+                        .environmentObject(settingsViewModel)
+                        .background(OpenSettingsInstaller())
+                        .task {
+                            // Set Convex auth token when signed in
+                            if let token = await authService.getSessionToken() {
+                                await ConvexService.shared.setAuthToken(token)
+                            }
+                        }
+                } else {
+                    // Sign in required
+                    SignInView()
+                }
+            }
         }
+
         .handlesExternalEvents(matching: ["main-window"])
         .windowResizability(.contentSize)
         .defaultSize(width: 1000, height: 600)
