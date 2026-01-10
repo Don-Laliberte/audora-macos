@@ -156,37 +156,38 @@ class AudioManager: NSObject, ObservableObject {
         // Stop any in-progress recording
         stopRecordingInternal()
 
-        // Validate API key and account status before connecting
+        // Validate authentication before connecting
         Task {
-            let validationResult = await APIKeyValidator.shared.validateCurrentAPIKey()
-            switch validationResult {
-            case .failure(let error):
-                let errorMsg = error.localizedDescription
-                print("❌ API key validation failed: \(errorMsg)")
+            // Check auth state
+            let authState = await MainActor.run { ConvexService.shared.authState }
+            guard case .authenticated = authState else {
+                let errorMsg = "Please sign in to start recording."
+                print("❌ Authentication required: \(errorMsg)")
                 DispatchQueue.main.async {
                     self.errorMessage = errorMsg
                 }
-            case .success:
-                // Proceed with taps after cleanup
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    // Always start microphone - user prioritizes voice transcription
-                    self.startMicrophoneTap()
+                return
+            }
 
-                    // Check audio output device
-                    let usingHeadphones = self.isUsingHeadphones()
+            // Proceed with taps after auth check
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // Always start microphone - user prioritizes voice transcription
+                self.startMicrophoneTap()
 
-                    if usingHeadphones {
-                        print("🎧 Headphones detected - optimal recording setup")
-                    } else {
-                        // Using speakers - warn about potential duplicates but still record
-                        print("🔊 Speakers detected - may have some echo/duplicates")
-                        print("💡 Connect headphones for best results (prevents echo)")
-                    }
+                // Check audio output device
+                let usingHeadphones = self.isUsingHeadphones()
 
-                    // Always start system audio capture
-                    Task {
-                        await self.startSystemAudioTap()
-                    }
+                if usingHeadphones {
+                    print("🎧 Headphones detected - optimal recording setup")
+                } else {
+                    // Using speakers - warn about potential duplicates but still record
+                    print("🔊 Speakers detected - may have some echo/duplicates")
+                    print("💡 Connect headphones for best results (prevents echo)")
+                }
+
+                // Always start system audio capture
+                Task {
+                    await self.startSystemAudioTap()
                 }
             }
         }

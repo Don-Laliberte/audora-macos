@@ -10,38 +10,53 @@ import Sparkle
 import PostHog
 import EventKit
 import Combine
-import ClerkSDK
+import Clerk
 
 @main
 struct AudoraApp: App {
     private let updaterController: SPUStandardUpdaterController
     @StateObject private var settingsViewModel = SettingsViewModel()
     @StateObject private var menuBarViewModel = MenuBarViewModel()
-    @StateObject private var authService = AuthService.shared
+    @StateObject private var convexService = ConvexService.shared
 
     init() {
         updaterController = SPUStandardUpdaterController(updaterDelegate: nil, userDriverDelegate: nil)
 
         // Configure Clerk
-        if let clerkKey = ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"] ?? Bundle.main.object(forInfoDictionaryKey: "CLERK_PUBLISHABLE_KEY") as? String {
-            Clerk.configure(publishableKey: clerkKey)
+        print("🔐 [Clerk Init] Checking for publishable key...")
+
+        // Check environment variable
+        let envKey = ProcessInfo.processInfo.environment["CLERK_PUBLISHABLE_KEY"]
+        print("   - Environment CLERK_PUBLISHABLE_KEY: \(envKey != nil ? "found (\(envKey!.prefix(20))...)" : "not found")")
+
+        // Check Info.plist
+        let plistKey = Bundle.main.object(forInfoDictionaryKey: "CLERK_PUBLISHABLE_KEY") as? String
+        print("   - Info.plist CLERK_PUBLISHABLE_KEY: \(plistKey != nil ? "found (\(plistKey!.prefix(20))...)" : "not found")")
+
+        if let clerkKey = envKey ?? plistKey {
+            print("🔐 [Clerk Init] Configuring with key: \(clerkKey.prefix(20))...")
+            Clerk.shared.configure(publishableKey: clerkKey)
+            print("🔐 [Clerk Init] ✅ Configuration complete")
+            print("   - Clerk.shared.user: \(Clerk.shared.user != nil ? "exists" : "nil")")
+            print("   - Clerk.shared.session: \(Clerk.shared.session != nil ? "exists" : "nil")")
+        } else {
+            print("🔐 [Clerk Init] ⚠️ NO PUBLISHABLE KEY FOUND!")
+            print("   - Make sure Config.xcconfig has CLERK_PUBLISHABLE_KEY set")
+            print("   - And that it's linked in your Xcode project configuration")
         }
 
         // Setup PostHog analytics for anonymous tracking
         let posthogAPIKey = "phc_6y4KXMabWzGL2UJIK8RoGJt9QCGTU8R1yuJ8OVRp5IV"
         let posthogHost = "https://us.i.posthog.com"
         let config = PostHogConfig(apiKey: posthogAPIKey, host: posthogHost)
-        // Only capture anonymous events
         config.personProfiles = .never
-        // Enable lifecycle and screen view autocapture
         config.captureApplicationLifecycleEvents = true
         config.captureScreenViews = true
         PostHogSDK.shared.setup(config)
-        // Register environment as a super property
         #if DEBUG
-        PostHogSDK.shared.register(["environment": "dev"] )
+        PostHogSDK.shared.register(["environment": "dev"])
         #else
-        PostHogSDK.shared.register(["environment": "prod"] )
+        PostHogSDK.shared.register(["environment": "prod"])
         #endif
 
         // Start meeting app detection
@@ -55,8 +70,8 @@ struct AudoraApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if authService.isLoading {
-                    // Loading state
+                switch convexService.authState {
+                case .loading:
                     VStack {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle())
@@ -64,25 +79,38 @@ struct AudoraApp: App {
                             .foregroundColor(.secondary)
                     }
                     .frame(minWidth: 400, minHeight: 300)
-                } else if authService.isSignedIn {
-                    // Main app
+                    .task {
+                        // Try to restore session from cache on launch
+                        _ = await convexService.loginFromCache()
+                    }
+                case .authenticated:
                     ContentView()
                         .frame(minWidth: 700, minHeight: 400)
                         .environmentObject(settingsViewModel)
                         .background(OpenSettingsInstaller())
-                        .task {
-                            // Set Convex auth token when signed in
-                            if let token = await authService.getSessionToken() {
-                                await ConvexService.shared.setAuthToken(token)
-                            }
-                        }
-                } else {
-                    // Sign in required
+                case .unauthenticated:
                     SignInView()
                 }
             }
-        }
+            .onOpenURL { url in
+                print("🔗 [OAuth] Received URL: \(url)")
+                print("🔗 [OAuth] URL scheme: \(url.scheme ?? "none")")
+                print("🔗 [OAuth] URL host: \(url.host ?? "none")")
 
+                // After receiving OAuth callback, check session after a brief delay
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+
+                    if let session = Clerk.shared.session {
+                        print("🔗 [OAuth] ✅ Session established: \(session.id)")
+                        ConvexService.shared.onSignInComplete()
+                    } else {
+                        print("🔗 [OAuth] ⚠️ No session after URL callback")
+                        print("   - Clerk.shared.user: \(Clerk.shared.user != nil ? "exists" : "nil")")
+                    }
+                }
+            }
+        }
         .handlesExternalEvents(matching: ["main-window"])
         .windowResizability(.contentSize)
         .defaultSize(width: 1000, height: 600)

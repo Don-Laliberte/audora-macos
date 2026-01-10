@@ -170,12 +170,12 @@ class MeetingViewModel: ObservableObject {
                     print("🔄 Updating audioFileURL in MeetingViewModel")
                     print("   Old: \(self.meeting.audioFileURL ?? "nil")")
                     print("   New: \(savedMeeting.audioFileURL ?? "nil")")
-                    
+
                     if let newPath = savedMeeting.audioFileURL {
                         let fileExists = FileManager.default.fileExists(atPath: newPath)
                         print("   File exists: \(fileExists)")
                     }
-                    
+
                     self.meeting.audioFileURL = savedMeeting.audioFileURL
                 }
             }
@@ -216,25 +216,14 @@ class MeetingViewModel: ObservableObject {
     }
 
     func startRecording() {
-        // Validate API key before starting recording
-        isValidatingKey = true
-        isStartingRecording = true
-        Task {
-            let validationResult = await APIKeyValidator.shared.validateCurrentAPIKey()
-            defer { isValidatingKey = false }
-
-            switch validationResult {
-            case .success():
-                // Key is valid, proceed with recording
-                recordingSessionManager.startRecording(for: meeting.id)
-            case .failure(let error):
-                // Show error message
-                errorMessage = error.localizedDescription
-                // Cancel starting if validation failed
-                isStartingRecording = false
-                print("❌ API key validation failed: \(error.localizedDescription)")
-            }
+        // Check authentication before starting recording
+        guard case .authenticated = ConvexService.shared.authState else {
+            errorMessage = "Please sign in to start recording."
+            return
         }
+
+        isStartingRecording = true
+        recordingSessionManager.startRecording(for: meeting.id)
     }
 
     func stopRecording() {
@@ -303,7 +292,7 @@ class MeetingViewModel: ObservableObject {
         // Upload audio file to Convex if available
         if let audioFileURLString = meeting.audioFileURL {
             let audioFileURL = URL(fileURLWithPath: audioFileURLString)
-            
+
             // Check if file exists
             if FileManager.default.fileExists(atPath: audioFileURL.path) {
                 do {
@@ -312,7 +301,7 @@ class MeetingViewModel: ObservableObject {
                         audioFileURL: audioFileURL,
                         meetingId: meeting.id
                     )
-                    
+
                     if let storageId = storageId {
                         print("✅ Audio file uploaded to Convex. Storage ID: \(storageId)")
                         // TODO: Store storageId in meeting when database schema is updated

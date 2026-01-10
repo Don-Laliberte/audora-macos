@@ -1,16 +1,17 @@
 // SignInView.swift
-// Authentication view using Clerk
+// Authentication view for Clerk sign-in
 
 import SwiftUI
 import AuthenticationServices
+import Clerk
 
 struct SignInView: View {
-    @StateObject private var authService = AuthService.shared
+    @ObservedObject private var convexService = ConvexService.shared
 
     @State private var email: String = ""
     @State private var password: String = ""
-    @State private var showPassword: Bool = false
     @State private var isSigningIn: Bool = false
+    @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,6 +36,7 @@ struct SignInView: View {
             VStack(spacing: 20) {
                 // Sign in with Apple button
                 SignInWithAppleButton(.signIn) { request in
+                    print("🍎 [Apple Sign-In] Configuring request...")
                     request.requestedScopes = [.email, .fullName]
                 } onCompletion: { result in
                     Task {
@@ -44,6 +46,26 @@ struct SignInView: View {
                 .signInWithAppleButtonStyle(.white)
                 .frame(height: 50)
                 .cornerRadius(10)
+
+                // Sign in with Google button
+                Button(action: signInWithGoogle) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "g.circle.fill")
+                            .font(.system(size: 20))
+                        Text("Sign in with Google")
+                            .fontWeight(.medium)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Color.white)
+                    .foregroundColor(.black)
+                    .cornerRadius(10)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
 
                 // Divider
                 HStack {
@@ -75,38 +97,27 @@ struct SignInView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    HStack {
-                        if showPassword {
-                            TextField("Password", text: $password)
-                                .textContentType(.password)
-                        } else {
-                            SecureField("Password", text: $password)
-                                .textContentType(.password)
-                        }
-
-                        Button(action: { showPassword.toggle() }) {
-                            Image(systemName: showPassword ? "eye.slash" : "eye")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .textFieldStyle(.plain)
-                    .padding(12)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(8)
+                    SecureField("Password", text: $password)
+                        .textFieldStyle(.plain)
+                        .padding(12)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(8)
+                        .textContentType(.password)
                 }
 
                 // Error message
-                if let error = authService.errorMessage {
+                if let error = errorMessage {
                     Text(error)
-                        .font(.caption)
+                        .font(.body)
                         .foregroundColor(.red)
                         .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 // Sign in button
                 Button(action: signIn) {
-                    if isSigningIn || authService.isLoading {
+                    if isSigningIn {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle())
                             .frame(maxWidth: .infinity)
@@ -142,31 +153,118 @@ struct SignInView: View {
             .padding(.bottom, 30)
         }
         .frame(minWidth: 500, minHeight: 600)
+        .onAppear {
+            print("📱 [SignInView] View appeared")
+            logClerkState()
+        }
+    }
+
+    private func logClerkState() {
+        print("🔐 [Clerk State] Checking Clerk configuration...")
+        print("   - Clerk.shared.session: \(Clerk.shared.session != nil ? "exists" : "nil")")
+        print("   - Clerk.shared.user: \(Clerk.shared.user != nil ? "exists (\(Clerk.shared.user?.id ?? "no id"))" : "nil")")
     }
 
     private func signIn() {
+        print("📧 [Email Sign-In] Starting with email: \(email)")
         isSigningIn = true
+        errorMessage = nil
+
         Task {
             do {
-                try await authService.signIn(email: email, password: password)
+                print("📧 [Email Sign-In] Calling SignIn.create...")
+                let signIn = try await SignIn.create(strategy: .identifier(email, password: password))
+                print("📧 [Email Sign-In] ✅ Success! SignIn ID: \(signIn.id)")
+                logClerkState()
+                ConvexService.shared.onSignInComplete()
             } catch {
-                // Error is handled by AuthService
+                let fullError = formatDetailedError(error)
+                print("📧 [Email Sign-In] ❌ Error: \(fullError)")
+                errorMessage = fullError
             }
             isSigningIn = false
         }
     }
 
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) async {
+        print("🍎 [Apple Sign-In] Handling result...")
+
         switch result {
-        case .success:
-            do {
-                try await authService.signInWithApple()
-            } catch {
-                // Error is handled by AuthService
+        case .success(let authorization):
+            print("🍎 [Apple Sign-In] ASAuthorization success")
+            print("   - Credential type: \(type(of: authorization.credential))")
+
+            if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
+                print("   - User ID: \(appleIDCredential.user)")
+                print("   - Email: \(appleIDCredential.email ?? "nil")")
+                print("   - Full Name: \(appleIDCredential.fullName?.givenName ?? "nil") \(appleIDCredential.fullName?.familyName ?? "nil")")
             }
+
+            do {
+                print("🍎 [Apple Sign-In] Calling Clerk SignIn.create with OAuth...")
+                let signIn = try await SignIn.create(strategy: .oauth(provider: .apple))
+                print("🍎 [Apple Sign-In] ✅ Success! SignIn ID: \(signIn.id)")
+                logClerkState()
+                ConvexService.shared.onSignInComplete()
+            } catch {
+                let fullError = formatDetailedError(error)
+                print("🍎 [Apple Sign-In] ❌ Clerk OAuth error: \(fullError)")
+                errorMessage = fullError
+            }
+
         case .failure(let error):
-            print("❌ Apple Sign In failed: \(error)")
+            let fullError = formatDetailedError(error)
+            print("🍎 [Apple Sign-In] ❌ ASAuthorization failed: \(fullError)")
+            errorMessage = fullError
         }
+    }
+
+    private func signInWithGoogle() {
+        print("🔵 [Google Sign-In] Starting...")
+        isSigningIn = true
+        errorMessage = nil
+        logClerkState()
+
+        Task {
+            do {
+                print("🔵 [Google Sign-In] Calling SignIn.create with OAuth...")
+                let signIn = try await SignIn.create(strategy: .oauth(provider: .google))
+                print("🔵 [Google Sign-In] ✅ Success! SignIn ID: \(signIn.id)")
+                logClerkState()
+                ConvexService.shared.onSignInComplete()
+            } catch {
+                let fullError = formatDetailedError(error)
+                print("🔵 [Google Sign-In] ❌ Error: \(fullError)")
+                errorMessage = fullError
+            }
+            isSigningIn = false
+        }
+    }
+
+    private func formatDetailedError(_ error: Error) -> String {
+        let nsError = error as NSError
+        var details = """
+        Error: \(error.localizedDescription)
+        Domain: \(nsError.domain)
+        Code: \(nsError.code)
+        """
+
+        if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            details += "\nUnderlying: \(underlyingError.localizedDescription)"
+        }
+
+        if let failureReason = nsError.userInfo[NSLocalizedFailureReasonErrorKey] as? String {
+            details += "\nReason: \(failureReason)"
+        }
+
+        if let recoverySuggestion = nsError.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String {
+            details += "\nSuggestion: \(recoverySuggestion)"
+        }
+
+        // Print full userInfo for debugging
+        print("   Full userInfo: \(nsError.userInfo)")
+
+        return details
     }
 }
 
