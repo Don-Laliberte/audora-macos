@@ -74,6 +74,11 @@ struct Settings: Codable {
         set { UserDefaultsManager.shared.notifyScheduledMeetings = newValue }
     }
 
+    var realtimeFeedbackEnabled: Bool {
+        get { UserDefaultsManager.shared.realtimeFeedbackEnabled }
+        set { UserDefaultsManager.shared.realtimeFeedbackEnabled = newValue }
+    }
+
 
     // System prompt default loading
     static func defaultSystemPrompt() -> String {

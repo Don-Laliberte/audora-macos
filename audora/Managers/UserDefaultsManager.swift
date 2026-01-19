@@ -29,6 +29,7 @@ class UserDefaultsManager {
         static let showLiveMeetingIndicator = "showLiveMeetingIndicator"
         static let launchAtLogin = "launchAtLogin"
         static let notifyScheduledMeetings = "notifyScheduledMeetings"
+        static let realtimeFeedbackEnabled = "realtimeFeedbackEnabled"
     }
 
     // MARK: - User Blurb
@@ -133,5 +134,10 @@ class UserDefaultsManager {
     var notifyScheduledMeetings: Bool {
         get { userDefaults.object(forKey: Keys.notifyScheduledMeetings) as? Bool ?? true }
         set { userDefaults.set(newValue, forKey: Keys.notifyScheduledMeetings) }
+    }
+
+    var realtimeFeedbackEnabled: Bool {
+        get { userDefaults.object(forKey: Keys.realtimeFeedbackEnabled) as? Bool ?? false }
+        set { userDefaults.set(newValue, forKey: Keys.realtimeFeedbackEnabled) }
     }
 }

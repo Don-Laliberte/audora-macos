@@ -70,10 +70,24 @@ class CalendarManager: ObservableObject {
             return hasAttendees || hasVideoLink
         }
 
+        // Deduplicate events by eventIdentifier (same event might appear in multiple calendars)
+        var seenIdentifiers = Set<String>()
+        let uniqueEvents = filteredEvents.compactMap { event -> EKEvent? in
+            guard let identifier = event.eventIdentifier, !identifier.isEmpty else {
+                // Skip events without a valid identifier
+                return nil
+            }
+            if seenIdentifiers.contains(identifier) {
+                return nil
+            }
+            seenIdentifiers.insert(identifier)
+            return event
+        }
+
         DispatchQueue.main.async {
-            self.upcomingEvents = filteredEvents
+            self.upcomingEvents = uniqueEvents
             // Find next event (first event that hasn't ended yet)
-            self.nextEvent = filteredEvents.first(where: { $0.endDate > Date() })
+            self.nextEvent = uniqueEvents.first(where: { $0.endDate > Date() })
         }
     }
 }

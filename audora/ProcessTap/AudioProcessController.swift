@@ -61,6 +61,7 @@ final class AudioProcessController {
     private(set) var processGroups = [AudioProcessGroup]()
 
     private var cancellables = Set<AnyCancellable>()
+    private var lastProcessIds = Set<pid_t>() // Track last set of process IDs to avoid unnecessary reloads
 
     func activate() {
         logger.debug(#function)
@@ -68,9 +69,15 @@ final class AudioProcessController {
         NSWorkspace.shared
             .publisher(for: \.runningApplications, options: [.initial, .new])
             .map { $0.filter({ $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) }
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main) // Debounce to prevent excessive reloads
             .sink { [weak self] apps in
                 guard let self else { return }
-                self.reload(apps: apps)
+                // Only reload if the set of process IDs actually changed
+                let currentIds = Set(apps.map { $0.processIdentifier })
+                if currentIds != self.lastProcessIds {
+                    self.lastProcessIds = currentIds
+                    self.reload(apps: apps)
+                }
             }
             .store(in: &cancellables)
     }

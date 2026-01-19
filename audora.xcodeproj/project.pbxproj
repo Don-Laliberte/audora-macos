@@ -7,12 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		25E42AB42F12423000067344 /* ConvexClerk in Frameworks */ = {isa = PBXBuildFile; productRef = 25E42AB32F12423000067344 /* ConvexClerk */; };
+		25E42AB62F1249FC00067344 /* Config.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 25E42AB52F1249FB00067344 /* Config.xcconfig */; };
+		C56DE0BE2EF38F5E00AB086D /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = C56DE0BD2EF38F5E00AB086D /* ConvexMobile */; };
 		CC5718382E2020490042BA88 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = CC5718372E2020490042BA88 /* OpenAI */; };
 		CCBA53E72E212F1C00469D84 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = CCBA53E62E212F1C00469D84 /* Sparkle */; };
 		CCC33F812E236B6F00EDE382 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = CCC33F802E236B6F00EDE382 /* PostHog */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		25E42AB52F1249FB00067344 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		CC5718182E201D8D0042BA88 /* audora.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = audora.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -32,6 +36,8 @@
 				CCC33F812E236B6F00EDE382 /* PostHog in Frameworks */,
 				CC5718382E2020490042BA88 /* OpenAI in Frameworks */,
 				CCBA53E72E212F1C00469D84 /* Sparkle in Frameworks */,
+				C56DE0BE2EF38F5E00AB086D /* ConvexMobile in Frameworks */,
+				25E42AB42F12423000067344 /* ConvexClerk in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -44,6 +50,7 @@
 				CC57181A2E201D8D0042BA88 /* audora */,
 				CC7816BF2E22093900101A90 /* Frameworks */,
 				CC5718192E201D8D0042BA88 /* Products */,
+				25E42AB52F1249FB00067344 /* Config.xcconfig */,
 			);
 			sourceTree = "<group>";
 		};
@@ -85,6 +92,8 @@
 				CC5718372E2020490042BA88 /* OpenAI */,
 				CCBA53E62E212F1C00469D84 /* Sparkle */,
 				CCC33F802E236B6F00EDE382 /* PostHog */,
+				C56DE0BD2EF38F5E00AB086D /* ConvexMobile */,
+				25E42AB32F12423000067344 /* ConvexClerk */,
 			);
 			productName = audora;
 			productReference = CC5718182E201D8D0042BA88 /* audora.app */;
@@ -118,6 +127,8 @@
 				CC5718362E2020490042BA88 /* XCRemoteSwiftPackageReference "OpenAI" */,
 				CCBA53E52E212F1C00469D84 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				CCC33F7F2E236B6F00EDE382 /* XCRemoteSwiftPackageReference "posthog-ios" */,
+				C56DE0BC2EF38F5E00AB086D /* XCRemoteSwiftPackageReference "convex-swift" */,
+				25E42AB22F12423000067344 /* XCRemoteSwiftPackageReference "convex-swift-clerk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CC5718192E201D8D0042BA88 /* Products */;
@@ -134,6 +145,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				25E42AB62F1249FC00067344 /* Config.xcconfig in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -152,6 +164,7 @@
 /* Begin XCBuildConfiguration section */
 		CC5718252E201D8E0042BA88 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 25E42AB52F1249FB00067344 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -215,6 +228,7 @@
 		};
 		CC5718262E201D8E0042BA88 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 25E42AB52F1249FB00067344 /* Config.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -287,8 +301,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = audora/Info.plist;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Audora uses your calendar to show upcoming meetings and make it easy to start recording them.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "audora needs access to your microphone for transcription.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Audora captures microphone audio for transcription. Mic following mode records your microphone ONLY when other apps are actively using it.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -297,7 +312,7 @@
 				MARKETING_VERSION = 0.0.1;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
-				PRODUCT_BUNDLE_IDENTIFIER = rami.audora;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.orbitlabs.audora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -323,8 +338,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = audora/Info.plist;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Audora uses your calendar to show upcoming meetings and make it easy to start recording them.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "audora needs access to your microphone for transcription.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Audora captures microphone audio for transcription. Mic following mode records your microphone ONLY when other apps are actively using it.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -333,7 +349,7 @@
 				MARKETING_VERSION = 0.0.1;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
-				PRODUCT_BUNDLE_IDENTIFIER = rami.audora;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.orbitlabs.audora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -365,6 +381,22 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		25E42AB22F12423000067344 /* XCRemoteSwiftPackageReference "convex-swift-clerk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mellobirkan/convex-swift-clerk";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		C56DE0BC2EF38F5E00AB086D /* XCRemoteSwiftPackageReference "convex-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/get-convex/convex-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.7.0;
+			};
+		};
 		CC5718362E2020490042BA88 /* XCRemoteSwiftPackageReference "OpenAI" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/MacPaw/OpenAI";
@@ -392,6 +424,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		25E42AB32F12423000067344 /* ConvexClerk */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 25E42AB22F12423000067344 /* XCRemoteSwiftPackageReference "convex-swift-clerk" */;
+			productName = ConvexClerk;
+		};
+		C56DE0BD2EF38F5E00AB086D /* ConvexMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C56DE0BC2EF38F5E00AB086D /* XCRemoteSwiftPackageReference "convex-swift" */;
+			productName = ConvexMobile;
+		};
 		CC5718372E2020490042BA88 /* OpenAI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = CC5718362E2020490042BA88 /* XCRemoteSwiftPackageReference "OpenAI" */;

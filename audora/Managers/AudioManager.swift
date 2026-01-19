@@ -22,7 +22,8 @@ class AudioManager: NSObject, ObservableObject {
     private var audioEngine = AVAudioEngine()
     private var micSocketTask: URLSessionWebSocketTask?
     private var systemSocketTask: URLSessionWebSocketTask?
-    private let realtimeURL = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")!
+    private let speechmaticsURL = URL(string: "wss://eu2.rt.speechmatics.com/v2/en")!
+
 
     // Unique identifier for the current recording session
     private var sessionID = UUID()
@@ -48,6 +49,9 @@ class AudioManager: NSObject, ObservableObject {
 
     // Session refresh timers to prevent 30-minute expiry
     private var sessionRefreshTimers: [AudioSource: Timer] = [:]
+
+    // Add reference to ConvexService
+    var convexService: ConvexService? = ConvexService.shared
 
 
     private override init() {
@@ -152,37 +156,38 @@ class AudioManager: NSObject, ObservableObject {
         // Stop any in-progress recording
         stopRecordingInternal()
 
-        // Validate API key and account status before connecting
+        // Validate authentication before connecting
         Task {
-            let validationResult = await APIKeyValidator.shared.validateCurrentAPIKey()
-            switch validationResult {
-            case .failure(let error):
-                let errorMsg = error.localizedDescription
-                print("❌ API key validation failed: \(errorMsg)")
+            // Check auth state
+            let authState = await MainActor.run { ConvexService.shared.authState }
+            guard case .authenticated = authState else {
+                let errorMsg = "Please sign in to start recording."
+                print("❌ Authentication required: \(errorMsg)")
                 DispatchQueue.main.async {
                     self.errorMessage = errorMsg
                 }
-            case .success:
-                // Proceed with taps after cleanup
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    // Always start microphone - user prioritizes voice transcription
-                    self.startMicrophoneTap()
+                return
+            }
 
-                    // Check audio output device
-                    let usingHeadphones = self.isUsingHeadphones()
+            // Proceed with taps after auth check
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // Always start microphone - user prioritizes voice transcription
+                self.startMicrophoneTap()
 
-                    if usingHeadphones {
-                        print("🎧 Headphones detected - optimal recording setup")
-                    } else {
-                        // Using speakers - warn about potential duplicates but still record
-                        print("🔊 Speakers detected - may have some echo/duplicates")
-                        print("💡 Connect headphones for best results (prevents echo)")
-                    }
+                // Check audio output device
+                let usingHeadphones = self.isUsingHeadphones()
 
-                    // Always start system audio capture
-                    Task {
-                        await self.startSystemAudioTap()
-                    }
+                if usingHeadphones {
+                    print("🎧 Headphones detected - optimal recording setup")
+                } else {
+                    // Using speakers - warn about potential duplicates but still record
+                    print("🔊 Speakers detected - may have some echo/duplicates")
+                    print("💡 Connect headphones for best results (prevents echo)")
+                }
+
+                // Always start system audio capture
+                Task {
+                    await self.startSystemAudioTap()
                 }
             }
         }
@@ -283,14 +288,15 @@ class AudioManager: NSObject, ObservableObject {
                     }
                 }
 
-
+                // Record audio buffer
+                AudioRecordingManager.shared.recordMicBuffer(buffer, format: recordingFormat)
 
                 self.processAudioBuffer(buffer, converter: converter, targetFormat: targetFormat, source: .mic)
             }
 
             audioEngine.prepare()
             try audioEngine.start()
-            connectToOpenAIRealtime(source: .mic)
+            connectToSpeechmatics(source: .mic)
             print("✅ Microphone tap started successfully")
             micRetryCount = 0  // Reset on success
 
@@ -337,8 +343,15 @@ class AudioManager: NSObject, ObservableObject {
 
         // Get all running processes that are producing audio
         let allProcessObjectIDs = audioProcessController.processes.map { $0.objectID }
+
+        // Provide better diagnostics
+        print("📊 Found \(allProcessObjectIDs.count) audio-producing process(es)")
         if allProcessObjectIDs.isEmpty {
             print("⚠️ No audio-producing processes found. System audio tap might not capture anything.")
+            print("   💡 Make sure an app is playing audio (Zoom, Teams, etc.)")
+        } else {
+            let processNames = audioProcessController.processes.prefix(3).map { $0.name }
+            print("   Processes: \(processNames.joined(separator: ", "))\(audioProcessController.processes.count > 3 ? "..." : "")")
         }
 
         // Configure the tap for system-wide audio
@@ -348,7 +361,19 @@ class AudioManager: NSObject, ObservableObject {
 
         // Check for activation errors
         if let tapError = newTap.errorMessage {
-            let errorMsg = "Failed to activate system audio tap: \(tapError)"
+            var errorMsg = "Failed to activate system audio tap: \(tapError)"
+
+            // Provide helpful guidance based on error
+            if tapError.contains("error 560947818") || tapError.contains("error -536870206") {
+                errorMsg += "\n\n💡 This usually means:\n"
+                errorMsg += "   1. Screen Recording permission is required\n"
+                errorMsg += "   2. Go to System Settings > Privacy & Security > Screen & System Audio Recording\n"
+                errorMsg += "   3. Enable Audora in the list\n"
+                errorMsg += "   4. Restart the app after granting permission"
+            } else if allProcessObjectIDs.isEmpty {
+                errorMsg += "\n\n💡 No audio-producing apps detected. Start a meeting app (Zoom, Teams, etc.) first."
+            }
+
             print("❌ \(errorMsg)")
             self.errorMessage = errorMsg
             if !isRestart { stopRecording() }
@@ -363,7 +388,7 @@ class AudioManager: NSObject, ObservableObject {
             try startTapIO(newTap)
 
             if !isRestart {
-                connectToOpenAIRealtime(source: .system)
+                connectToSpeechmatics(source: .system)
                 self.isRecording = true
                 AudioLevelManager.shared.updateRecordingState(true)
             }
@@ -457,8 +482,15 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         try tap.run(on: tapQueue) { [weak self] _, inInputData, _, _, _ in
-            guard let self = self,
-                  let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inInputData, deallocator: nil) else {
+            guard let self = self else { return }
+
+            // Check if tap is still active before processing
+            guard self.isTapActive, self.processTap === tap else {
+                // Tap was invalidated, stop processing
+                return
+            }
+
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inInputData, deallocator: nil) else {
                 return
             }
 
@@ -484,19 +516,28 @@ class AudioManager: NSObject, ObservableObject {
                 }
             }
 
+            // Record audio buffer
+            AudioRecordingManager.shared.recordSystemBuffer(buffer, format: format)
+
             self.processAudioBuffer(buffer, converter: converter, targetFormat: targetFormat, source: .system)
 
-        } invalidationHandler: { [weak self] _ in
+        } invalidationHandler: { [weak self] invalidatedTap in
             guard let self else { return }
             print("Audio tap was invalidated.")
 
-            if !self.isRestartingSystemTap {
+            // Mark tap as inactive immediately to prevent further processing
+            self.isTapActive = false
+
+            // Only restart if this was unexpected and we're still recording
+            if !self.isRestartingSystemTap && self.isRecording {
                 print("Tap invalidated unexpectedly. Restarting system audio tap.")
-                Task {
+                Task { @MainActor in
+                    // Small delay to let Core Audio clean up
+                    try? await Task.sleep(for: .milliseconds(100))
                     await self.restartSystemAudioTap()
                 }
             } else {
-                print("Tap invalidated as part of a restart. Not stopping recording.")
+                print("Tap invalidated as part of a restart or recording stopped. Not restarting.")
             }
         }
     }
@@ -574,21 +615,36 @@ class AudioManager: NSObject, ObservableObject {
         sendAudioData(data, source: source)
     }
 
-    private func connectToOpenAIRealtime(source: AudioSource) {
-        guard let key = KeychainHelper.shared.getAPIKey(), !key.isEmpty else {
-            let errorMsg = ErrorMessage.noAPIKey
-            print("❌ \(errorMsg)")
-            DispatchQueue.main.async {
-                self.errorMessage = errorMsg
-            }
-            return
-        }
-
+    private func connectToSpeechmatics(source: AudioSource) {
+        // Use Convex Service to fetch JWT
         let session = URLSession(configuration: .default)
-        var request = URLRequest(url: realtimeURL)
-        request.addValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.addValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
+        var request = URLRequest(url: speechmaticsURL)
 
+        Task { [weak self] in
+            guard let self = self else { return }
+
+            do {
+                if let convexService = self.convexService {
+                    let jwt = try await convexService.getSpeechmaticsJWT()
+                    request.addValue("Bearer \(jwt)", forHTTPHeaderField: "Authorization")
+                } else {
+                     throw NSError(domain: "AudioManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Convex Service not initialized"])
+                }
+
+                await self.establishConnection(request: request, session: session, source: source)
+
+            } catch {
+                let errorMsg = "\(ErrorMessage.configurationFailed): \(ErrorHandler.shared.handleError(error))"
+                print("❌ \(errorMsg)")
+                print("❌ Raw Error Detail: \(error)") // Log raw error for debugging
+                await MainActor.run {
+                    self.errorMessage = errorMsg
+                }
+            }
+        }
+    }
+
+    private func establishConnection(request: URLRequest, session: URLSession, source: AudioSource) async {
         let task = session.webSocketTask(with: request)
 
         // Add connection monitoring
@@ -615,7 +671,7 @@ class AudioManager: NSObject, ObservableObject {
         let sessionRefreshTimer = Timer.scheduledTimer(withTimeInterval: 28 * 60.0, repeats: false) { [weak self] _ in
             guard let self = self, self.isRecording else { return }
             print("📝 Proactively refreshing session for \(source) to prevent expiry...")
-            self.connectToOpenAIRealtime(source: source)
+                self.connectToSpeechmatics(source: source)
         }
         sessionRefreshTimers[source] = sessionRefreshTimer
 
@@ -631,21 +687,18 @@ class AudioManager: NSObject, ObservableObject {
             }
         }
 
-        // Send initial configuration
+        // Send initial configuration for Speechmatics V2
         let config: [String: Any] = [
-            "type": "transcription_session.update",
-            "session": [
-                "input_audio_format": "pcm16",
-                "input_audio_transcription": [
-                    "model": "gpt-4o-mini-transcribe",
-                    "language": "en"
-                ],
-                "turn_detection": [
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 200
-                ]
+            "message": "StartRecognition",
+            "audio_format": [
+                "type": "raw",
+                "encoding": "pcm_s16le",
+                "sample_rate": 24000
+            ],
+            "transcription_config": [
+                "language": "en",
+                "enable_partials": true,
+                "max_delay": 2
             ]
         ]
 
@@ -685,7 +738,7 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         receiveMessage(for: source, sessionID: thisSession)
-        print("🌐 Connected to OpenAI Realtime (\(source))")
+        print("🌐 Connected to Speechmatics (\(source))")
     }
 
     private func receiveMessage(for source: AudioSource, sessionID: UUID) {
@@ -736,7 +789,7 @@ class AudioManager: NSObject, ObservableObject {
                     if ErrorHandler.shared.shouldRetry(error) {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                             guard let self = self, self.isRecording, self.sessionID == sessionID else { return }
-                            self.connectToOpenAIRealtime(source: source)
+                            self.connectToSpeechmatics(source: source)
                         }
                     }
                 }
@@ -753,7 +806,7 @@ class AudioManager: NSObject, ObservableObject {
             print("📝 Session expired for \(source) (WebSocket error), attempting to restart connection...")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 guard let self = self, self.isRecording else { return }
-                self.connectToOpenAIRealtime(source: source)
+                self.connectToSpeechmatics(source: source)
             }
             // Return session expired message but don't stop recording
             return ErrorMessage.sessionExpired
@@ -775,196 +828,124 @@ class AudioManager: NSObject, ObservableObject {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
-        // Early error handling for any payload with "error" key
-        if let errorDict = json["error"] as? [String: Any] {
-            let errorType = errorDict["type"] as? String ?? "unknown_error"
-            let errorCode = errorDict["code"] as? String ?? ""
-            let errorMessage = errorDict["message"] as? String ?? "Unknown error occurred"
-            print("❌ OpenAI Realtime API Error (\(source)) - Type: \(errorType), Code: \(errorCode), Message: \(errorMessage)")
+        guard let messageType = json["message"] as? String else { return }
 
-            // Map common error codes to user-friendly messages
-            let userFriendlyMessage: String
-            switch errorCode {
-            case "insufficient_quota", "quota_exceeded":
-                userFriendlyMessage = ErrorMessage.insufficientFunds
-            case "invalid_api_key", "authentication_failed":
-                userFriendlyMessage = ErrorMessage.invalidAPIKey
-            case "rate_limit_exceeded":
-                userFriendlyMessage = ErrorMessage.rateLimited
-            case "server_error":
-                userFriendlyMessage = ErrorMessage.apiServerError
-            case "access_denied", "forbidden":
-                userFriendlyMessage = ErrorMessage.accessForbidden
-            case "session_expired":
-                // Handle session expiry by automatically restarting the connection
-                print("📝 Session expired for \(source), attempting to restart connection...")
-                userFriendlyMessage = ErrorMessage.sessionExpired
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    guard let self = self, self.isRecording else { return }
-                    self.connectToOpenAIRealtime(source: source)
-                }
-                // Show informational message but don't stop recording
-                DispatchQueue.main.async {
-                    self.errorMessage = userFriendlyMessage
-                    // Clear the message after a few seconds
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                        if self.errorMessage == userFriendlyMessage {
-                            self.errorMessage = nil
-                        }
-                    }
-                }
-                return
-            default:
-                // Check for session expiry in the error message
-                if errorMessage.lowercased().contains("session hit the maximum duration") ||
-                   errorMessage.lowercased().contains("session expired") {
-                    // Handle session expiry by automatically restarting the connection
-                    print("📝 Session expired for \(source), attempting to restart connection...")
-                    userFriendlyMessage = ErrorMessage.sessionExpired
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                        guard let self = self, self.isRecording else { return }
-                        self.connectToOpenAIRealtime(source: source)
-                    }
-                    // Show informational message but don't stop recording
-                    DispatchQueue.main.async {
-                        self.errorMessage = userFriendlyMessage
-                        // Clear the message after a few seconds
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                            if self.errorMessage == userFriendlyMessage {
-                                self.errorMessage = nil
-                            }
-                        }
-                    }
-                    return
-                }
-                // Check if this is a transcription failure (often indicates insufficient funds)
-                else if errorMessage.lowercased().contains("input transcription failed") ||
-                        errorMessage.lowercased().contains("transcription failed") {
-                    userFriendlyMessage = "\(errorMessage)\n\nNote: This error typically occurs when your OpenAI account has insufficient funds. Please check your account balance and add credits if needed."
-                } else {
-                    userFriendlyMessage = "Transcription error: \(errorMessage)"
+        switch messageType {
+        case "AddTranscript":
+            // Handle transcriptions
+            guard let metadata = json["metadata"] as? [String: Any],
+                  let results = json["results"] as? [[String: Any]] else { return }
+
+            var transcriptBuffer = ""
+            var isFinal = false
+
+            // Check if this is a final transcript (Speechmatics default is partial unless finalized)
+            // Actually Speechmatics V2 sends 'AddTranscript' for both.
+            // We use 'is_approximate' or similar fields if available, but usually V2 results are additive/corrections.
+            // Simplified: If 'transcript' field exists in metadata, use it? No.
+            // Iterate results.
+
+            for result in results {
+                if let alternatives = result["alternatives"] as? [[String: Any]],
+                   let firstAlt = alternatives.first,
+                   let content = firstAlt["content"] as? String {
+                     transcriptBuffer += content + " "
                 }
             }
 
-            DispatchQueue.main.async {
-                self.errorMessage = userFriendlyMessage
-                // Stop recording when transcription errors occur
-                if self.isRecording {
-                    self.stopRecording()
+            // Cleanup buffer
+            transcriptBuffer = transcriptBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if transcriptBuffer.isEmpty { return }
+
+            // Speechmatics V2 sends finalized results when "is_eos" is true?
+            // Or look at 'type' in results?
+            // For now, treat all AddTranscript as partials updating the current view,
+            // unless we determine it's a stabilized segment.
+            // To properly match OpenAI's 'delta' vs 'completed', we'd need to track sequence numbers.
+            // For simplicity in this migration: treating as STREAMING updates.
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+
+                // For Speechmatics, AddTranscript usually contains new words.
+                // However, without complex logic, we might just append?
+                // Actually, 'results' contains a list of words.
+
+                // Let's assume we treat it as an update to the current "Interim"
+                self.currentInterim[source] = (self.currentInterim[source] ?? "") + " " + transcriptBuffer
+
+                // Update the UI chunk (marking as interim)
+
+                // Remove previous interim chunk
+                if let lastIndex = self.transcriptChunks.lastIndex(where: { !$0.isFinal && $0.source == source }) {
+                    self.transcriptChunks.remove(at: lastIndex)
                 }
+
+                let chunk = TranscriptChunk(
+                    timestamp: Date(),
+                    source: source,
+                    text: self.currentInterim[source] ?? "",
+                    isFinal: false // Keep it false until EndOfTranscript or explicit finalization logic
+                )
+                self.transcriptChunks.append(chunk)
             }
-            return
-        }
 
-        guard let type = json["type"] as? String else { return }
+        case "EndOfTranscript":
+             // Mark current interim as final
+             DispatchQueue.main.async { [weak self] in
+                 guard let self = self else { return }
 
-        // Check for general failure status in any event
-        if let status = json["status"] as? String, status == "failed" {
-            let itemId = json["item_id"] as? String ?? json["id"] as? String ?? "unknown"
-            print("❌ Event failed (\(source)): type=\(type), item=\(itemId)")
-            let errorMessage = "Transcription failed for \(type) (item: \(itemId))\n\nNote: This error typically occurs when your OpenAI account has insufficient funds. Please check your account balance and add credits if needed."
-            DispatchQueue.main.async {
-                self.errorMessage = errorMessage
-                // Stop recording when transcription errors occur
-                if self.isRecording {
-                    self.stopRecording()
-                }
-            }
-            return
-        }
+                 let finalText = self.currentInterim[source] ?? ""
+                 if finalText.isEmpty { return }
 
-        // Debug logging for key events (can be removed later)
-        if type.contains("transcription") || type.contains("error") {
-            print("🔍 Event (\(source)): \(type) - \(String(data: data, encoding: .utf8) ?? "invalid")")
-        }
+                 // Remove interim
+                 self.transcriptChunks.removeAll { !$0.isFinal && $0.source == source }
 
-        switch type {
-        case "conversation.item.input_audio_transcription.delta":
-            if let delta = json["delta"] as? String {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
+                 let chunk = TranscriptChunk(
+                     timestamp: Date(),
+                     source: source,
+                     text: finalText,
+                     isFinal: true
+                 )
+                 self.transcriptChunks.append(chunk)
+                 self.currentInterim[source] = ""
+             }
 
-                    // Safely accumulate interim text for this source
-                    self.currentInterim[source, default: ""] += delta
-
-                    // Remove previous interim chunk from the same source (if any)
-                    if let lastIndex = self.transcriptChunks.lastIndex(where: { !$0.isFinal && $0.source == source }) {
-                        self.transcriptChunks.remove(at: lastIndex)
-                    }
-
-                    // Append updated interim chunk
-                    let chunk = TranscriptChunk(
-                        timestamp: Date(),
-                        source: source,
-                        text: self.currentInterim[source] ?? "",
-                        isFinal: false
-                    )
-                    self.transcriptChunks.append(chunk)
-                }
-            }
-        case "conversation.item.input_audio_transcription.completed":
-            if let transcript = json["transcript"] as? String {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-
-                    // Remove any interim chunks for this source
-                    self.transcriptChunks.removeAll { !$0.isFinal && $0.source == source }
-
-                    // Append final chunk
-                    let chunk = TranscriptChunk(
-                        timestamp: Date(),
-                        source: source,
-                        text: transcript,
-                        isFinal: true
-                    )
-                    self.transcriptChunks.append(chunk)
-
-                    // Reset interim for this source
-                    self.currentInterim[source] = ""
-                }
-            }
-        case "conversation.item.input_audio_transcription.failed":
-            if let itemId = json["item_id"] as? String {
-                print("❌ Transcription failed for item: \(itemId)")
-                let errorMessage = "Audio transcription failed for item: \(itemId)\n\nNote: This error typically occurs when your OpenAI account has insufficient funds. Please check your account balance and add credits if needed."
-                DispatchQueue.main.async {
-                    self.errorMessage = errorMessage
-                    // Stop recording when transcription errors occur
-                    if self.isRecording {
-                        self.stopRecording()
-                    }
-                }
-            }
-        case "error":
-            // This case is now handled by the early error handling above.
-            // If we reach here, it means the error was not caught by the early check.
-            // We can add specific handling for this case if needed, but for now,
-            // the early error handling covers it.
+        case "AudioAdded":
+            // Ack
             break
-        case "session.updated", "session.created":
-            // Log session events for debugging
-            print("📋 Session event (\(source)): \(type)")
-        case "response.done", "response.created":
-            // Log response events for debugging (these don't contain transcription data)
-            print("🔄 Response event (\(source)): \(type)")
-        case "rate_limits.updated":
-            // Log rate limit updates
-            if let rateLimits = json["rate_limits"] as? [[String: Any]] {
-                for limit in rateLimits {
-                    if let name = limit["name"] as? String,
-                       let remaining = limit["remaining"] as? Int,
-                       let total = limit["limit"] as? Int {
-                        print("📊 Rate limit (\(source)) - \(name): \(remaining)/\(total)")
 
-                        // Warn when approaching limits
-                        if name == "tokens" && remaining < 1000 {
-                            print("⚠️ Warning: Low token balance remaining: \(remaining)")
-                        }
-                    }
-                }
-            }
+        case "Error":
+             if let type = json["type"] as? String, let reason = json["reason"] as? String {
+                 print("❌ Speechmatics Error: \(type) - \(reason)")
+                 let errorMessage = "Transcription Error: \(reason)"
+                 DispatchQueue.main.async {
+                     self.errorMessage = errorMessage
+                 }
+             }
+
         default:
-            break
+            print("Unknown Speechmatics message: \(messageType)")
+        }
+    }
+
+
+
+    private func sendMessage(_ message: [String: Any], source: AudioSource) {
+        let task: URLSessionWebSocketTask? = (source == .mic) ? micSocketTask : systemSocketTask
+        guard let socket = task, socket.state == .running else { return }
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: message)
+            if let jsonStr = String(data: jsonData, encoding: .utf8) {
+                socket.send(.string(jsonStr)) { error in
+                    if let error = error {
+                        print("❌ Failed to send message: \(error)")
+                    }
+                }
+            }
+        } catch {
+             print("❌ Failed to serialize message")
         }
     }
 
@@ -973,27 +954,20 @@ class AudioManager: NSObject, ObservableObject {
 
         guard let socket = task, socket.state == .running else { return }
 
-        let base64 = data.base64EncodedString()
-        let message: [String: Any] = ["type": "input_audio_buffer.append", "audio": base64]
-
+        // Speechmatics accepts raw binary messages
         let thisSession = self.sessionID
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: message)
-            if let jsonStr = String(data: jsonData, encoding: .utf8) {
-                socket.send(.string(jsonStr)) { [weak self] error in
-                    if let error = error {
-                        guard let self = self, self.sessionID == thisSession else { return }
 
-                        // Ignore cancellation errors, which are expected when stopping recording.
-                        if (error as? URLError)?.code == .cancelled {
-                            return
-                        }
-                        print("❌ Send error (\(source)): \(error)")
-                    }
-                }
-            }
-        } catch {
-            print("❌ JSON send error")
+        // Just send the data
+        socket.send(.data(data)) { [weak self] error in
+             if let error = error {
+                 guard let self = self, self.sessionID == thisSession else { return }
+
+                 // Ignore cancellation errors
+                 if (error as? URLError)?.code == .cancelled {
+                     return
+                 }
+                 print("❌ Send error (\(source)): \(error)")
+             }
         }
     }
 

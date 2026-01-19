@@ -115,7 +115,7 @@ struct MeetingListView: View {
                 }
             }
             .overlay {
-                if viewModel.filteredMeetings.isEmpty && !viewModel.isLoading {
+                if viewModel.filteredMeetings.isEmpty && viewModel.upcomingEvents.isEmpty && !viewModel.isLoading {
                     ContentUnavailableView(
                         viewModel.searchText.isEmpty ? "No Meetings Yet" : "No Results",
                         systemImage: viewModel.searchText.isEmpty ? "mic.slash" : "magnifyingglass",
@@ -459,17 +459,6 @@ struct MeetingDetailContentView: View {
         return recordingSessionManager.isRecording && !recordingSessionManager.isRecordingMeeting(viewModel.meeting.id)
     }
 
-    // Helper to get audio file URL - placeholder for now until backend is ready
-    private var audioFileURL: URL? {
-        // For testing: Load audio file from app bundle
-        if let url = Bundle.main.url(forResource: "audora_audio_test1", withExtension: "m4a") {
-            return url
-        }
-        // TODO: Replace with actual audio file path from meeting when backend is ready
-        // For now, return nil to show placeholder
-        return nil
-    }
-
     var body: some View {
         HSplitView {
             // Middle Column: Audio Player + Transcript
@@ -512,8 +501,30 @@ struct MeetingDetailContentView: View {
             headerSection
 
             // Audio Player (fixed at top)
-            AudioPlayerView(audioURL: audioFileURL)
-
+            if let audioFileURLString = viewModel.meeting.audioFileURL {
+                let audioURL = URL(fileURLWithPath: audioFileURLString)
+                // Verify file exists before showing player
+                if FileManager.default.fileExists(atPath: audioURL.path) {
+                    AudioPlayerView(audioURL: audioURL)
+                } else {
+                    // File path exists in meeting but file not found - might be deleted or path is wrong
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("Audio file not found")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Path: \(audioFileURLString)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(12)
+                }
+            }
             // Transcript Section
             transcriptSection
         }
