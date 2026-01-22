@@ -286,11 +286,6 @@ class AudioManager: NSObject, ObservableObject {
 
                 // Record audio buffer
                 AudioRecordingManager.shared.recordMicBuffer(buffer, format: recordingFormat)
-
-                // Track activity for mic following mode
-                self.activityTracker?.onAudioBuffer(buffer)
-
-
                 self.processAudioBuffer(buffer, converter: converter, targetFormat: targetFormat, source: .mic)
             }
 

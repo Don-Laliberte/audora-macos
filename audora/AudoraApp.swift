@@ -125,8 +125,13 @@ class MenuBarViewModel: ObservableObject {
         // Initial load
         showUpcomingInMenuBar = UserDefaultsManager.shared.showUpcomingInMenuBar
 
-        // Observe UserDefaults changes reactively instead of polling
-        UserDefaults.standard.publisher(for: \.showUpcomingInMenuBar)
+        // Observe UserDefaults changes reactively
+        // Note: We observe the notification because UserDefaultsManager sets values directly via set(),
+        // which bypasses the extension property setter and doesn't trigger KVO on the property.
+        // The extension property setter is available for direct use, but UserDefaultsManager doesn't use it.
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .map { _ in UserDefaultsManager.shared.showUpcomingInMenuBar }
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newValue in
                 self?.showUpcomingInMenuBar = newValue
@@ -137,7 +142,12 @@ class MenuBarViewModel: ObservableObject {
 
 extension UserDefaults {
     @objc dynamic var showUpcomingInMenuBar: Bool {
-        return bool(forKey: "showUpcomingInMenuBar")
+        get {
+            return bool(forKey: "showUpcomingInMenuBar")
+        }
+        set {
+            set(newValue, forKey: "showUpcomingInMenuBar")
+        }
     }
 }
 

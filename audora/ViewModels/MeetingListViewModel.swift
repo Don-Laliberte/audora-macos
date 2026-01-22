@@ -146,7 +146,15 @@ class MeetingListViewModel: ObservableObject {
         var newMeeting = Meeting(title: "Recording - \(formattedDate)")
         let meetingId = newMeeting.id // Capture ID for background task
         meetings.insert(newMeeting, at: 0)
-        // _ = LocalStorageManager.shared.saveMeeting(newMeeting)
+        
+        // Save immediately to prevent data loss if app terminates before background task completes
+        let saveSuccess = LocalStorageManager.shared.saveMeeting(newMeeting)
+        if saveSuccess {
+            print("✅ Saved new meeting immediately: \(newMeeting.id)")
+            NotificationCenter.default.post(name: .meetingSaved, object: newMeeting)
+        } else {
+            print("❌ Failed to save new meeting immediately")
+        }
 
         // Get browser context asynchronously and update title later
         Task.detached(priority: .background) {
@@ -157,6 +165,7 @@ class MeetingListViewModel: ObservableObject {
                     if let index = self.meetings.firstIndex(where: { $0.id == meetingId }) {
                         self.meetings[index].title = "\(context) - \(formattedDate)"
                         print("✅ Updated title to: \(self.meetings[index].title)")
+                        // Save again with updated title
                         let success = LocalStorageManager.shared.saveMeeting(self.meetings[index])
                         if success {
                             // Post notification so MeetingViewModel can update
@@ -164,6 +173,9 @@ class MeetingListViewModel: ObservableObject {
                         }
                     }
                 }
+            } else {
+                // Browser context lookup failed, but meeting is already saved with placeholder title
+                print("ℹ️ Browser context not available, meeting saved with placeholder title")
             }
         }
 
