@@ -222,27 +222,45 @@ class AudioRecordingManager: ObservableObject {
         do {
             // Read first segment to get format
             let firstFile = try AVAudioFile(forReading: segments[0])
-            let format = firstFile.processingFormat
+            let inputFormat = firstFile.processingFormat
             
-            // Create output file
-            let outputFile = try AVAudioFile(forWriting: outputURL, settings: [
+            print("🔍 Input format - Sample rate: \(inputFormat.sampleRate), Channels: \(inputFormat.channelCount), Format: \(inputFormat.commonFormat.rawValue)")
+            
+            // Create AAC encoder settings (use quality instead of bit rate to avoid format errors)
+            // AVEncoderBitRateKey causes kAudioConverterErr_FormatNotSupported (560226676) error
+            let encoderSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: format.sampleRate,
-                AVNumberOfChannelsKey: format.channelCount,
-                AVEncoderBitRateKey: 128000
-            ])
+                AVSampleRateKey: inputFormat.sampleRate,
+                AVNumberOfChannelsKey: inputFormat.channelCount,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+            ]
+            
+            // Create output file with encoder settings
+            let outputFile = try AVAudioFile(forWriting: outputURL, settings: encoderSettings)
+            print("✅ Created output file with AAC encoding")
             
             let bufferSize: AVAudioFrameCount = 4096
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: bufferSize)!
+            let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: bufferSize)!
             
             // Append each segment to the output file
             for segmentURL in segments {
                 let segmentFile = try AVAudioFile(forReading: segmentURL)
                 segmentFile.framePosition = 0
                 
+                let segmentFormat = segmentFile.processingFormat
+                
+                // Ensure segment format matches input format
+                guard segmentFormat.sampleRate == inputFormat.sampleRate &&
+                      segmentFormat.channelCount == inputFormat.channelCount else {
+                    print("⚠️ Segment format mismatch for \(segmentURL.lastPathComponent)")
+                    print("   Expected: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch")
+                    print("   Got: \(segmentFormat.sampleRate)Hz, \(segmentFormat.channelCount)ch")
+                    continue
+                }
+                
                 while segmentFile.framePosition < segmentFile.length {
-                    try segmentFile.read(into: buffer)
-                    try outputFile.write(from: buffer)
+                    try segmentFile.read(into: inputBuffer)
+                    try outputFile.write(from: inputBuffer)
                 }
                 
                 print("✅ Appended segment: \(segmentURL.lastPathComponent)")
@@ -251,6 +269,11 @@ class AudioRecordingManager: ObservableObject {
             return outputURL
         } catch {
             print("❌ Failed to combine segments: \(error)")
+            print("   Error details: \(error.localizedDescription)")
+            if let nsError = error as NSError? {
+                print("   Error code: \(nsError.code), domain: \(nsError.domain)")
+                print("   User info: \(nsError.userInfo)")
+            }
             return nil
         }
     }
@@ -288,17 +311,20 @@ class AudioRecordingManager: ObservableObject {
     private func convertToM4A(sourceURL: URL, outputURL: URL) -> URL? {
         do {
             let sourceFile = try AVAudioFile(forReading: sourceURL)
-            let format = sourceFile.processingFormat
+            let inputFormat = sourceFile.processingFormat
             
-            let outputFile = try AVAudioFile(forWriting: outputURL, settings: [
+            // Create AAC encoder settings (use quality instead of bit rate to avoid format errors)
+            let encoderSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: format.sampleRate,
-                AVNumberOfChannelsKey: format.channelCount,
-                AVEncoderBitRateKey: 128000
-            ])
+                AVSampleRateKey: inputFormat.sampleRate,
+                AVNumberOfChannelsKey: inputFormat.channelCount,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+            ]
+            
+            let outputFile = try AVAudioFile(forWriting: outputURL, settings: encoderSettings)
             
             let bufferSize: AVAudioFrameCount = 4096
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: bufferSize)!
+            let buffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: bufferSize)!
             
             sourceFile.framePosition = 0
             while sourceFile.framePosition < sourceFile.length {
@@ -309,6 +335,10 @@ class AudioRecordingManager: ObservableObject {
             return outputURL
         } catch {
             print("❌ Failed to convert audio file: \(error)")
+            print("   Error details: \(error.localizedDescription)")
+            if let nsError = error as NSError? {
+                print("   Error code: \(nsError.code), domain: \(nsError.domain)")
+            }
             return nil
         }
     }

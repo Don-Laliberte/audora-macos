@@ -594,7 +594,7 @@ struct MeetingDetailContentView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.meeting.transcript.isEmpty || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
+                .disabled(viewModel.meeting.transcriptChunks.isEmpty || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
                 .help("Generate enhanced notes using a template")
 
                 // Recording Button

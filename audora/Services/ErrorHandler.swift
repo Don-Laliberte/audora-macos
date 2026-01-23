@@ -152,6 +152,8 @@ class ErrorHandler {
             return ErrorMessage.insufficientFunds
         } else if errorDescription.contains("rate limit") || errorDescription.contains("429") {
             return ErrorMessage.rateLimited
+        } else if errorDescription.contains("quota") || errorDescription.contains("concurrent quota") {
+            return "Transcription quota exceeded. You've reached your concurrent session limit. Please stop other recordings or upgrade your Speechmatics plan."
         } else if errorDescription.contains("server error") || errorDescription.contains("500") {
             return ErrorMessage.apiServerError
         } else if errorDescription.contains("forbidden") || errorDescription.contains("403") {
