@@ -141,16 +141,22 @@ class MeetingViewModel: ObservableObject {
 
         // If currently recording this meeting, load live transcript chunks
         if recordingSessionManager.isRecordingMeeting(meeting.id) {
-            self.meeting.transcriptChunks = recordingSessionManager.getTranscriptChunks(for: meeting.id)
+            let liveChunks = recordingSessionManager.getTranscriptChunks(for: meeting.id)
+            self.meeting.transcriptChunks = liveChunks
+            print("🔄 [MeetingViewModel] Loaded \(liveChunks.count) live chunks for recording meeting")
+        } else {
+            // Not recording - ensure we have the saved chunks from storage
+            print("🔄 [MeetingViewModel] Meeting not recording, using saved chunks: \(self.meeting.transcriptChunks.count)")
         }
 
         // Listen to real-time transcript updates for this meeting if it's being recorded
+        // Don't use dropFirst() - we need the initial value to preserve chunks when resuming
         recordingSessionManager.$activeRecordingTranscriptChunksUpdated
-            .dropFirst()
             .sink { [weak self] updatedChunks in
                 guard let self = self else { return }
                 // Only update if this meeting is the active recording
                 if recordingSessionManager.isRecordingMeeting(self.meeting.id) {
+                    print("🔄 [MeetingViewModel] Updating chunks from recording: \(updatedChunks.count) chunks")
                     self.meeting.transcriptChunks = updatedChunks
                 }
             }
@@ -289,37 +295,8 @@ class MeetingViewModel: ObservableObject {
         // Clear existing notes for streaming
         meeting.generatedNotes = ""
 
-        // Upload audio file to Convex if available
-        if let audioFileURLString = meeting.audioFileURL {
-            let audioFileURL = URL(fileURLWithPath: audioFileURLString)
-
-            // Check if file exists
-            if FileManager.default.fileExists(atPath: audioFileURL.path) {
-                do {
-                    print("📤 Uploading audio file to Convex before generating notes...")
-                    let storageId = try await ConvexService.shared.uploadAudioFile(
-                        audioFileURL: audioFileURL,
-                        meetingId: meeting.id
-                    )
-
-                    if let storageId = storageId {
-                        print("✅ Audio file uploaded to Convex. Storage ID: \(storageId)")
-                        // TODO: Store storageId in meeting when database schema is updated
-                        // For now, we just log it
-                    } else {
-                        print("⚠️ Audio file uploaded but no storage ID returned")
-                    }
-                } catch {
-                    // Log error but don't block note generation if upload fails
-                    print("⚠️ Failed to upload audio file to Convex: \(error.localizedDescription)")
-                    // Continue with note generation even if upload fails
-                }
-            } else {
-                print("⚠️ Audio file path exists but file not found: \(audioFileURLString)")
-            }
-        } else {
-            print("ℹ️ No audio file available for this meeting, skipping upload")
-        }
+        // Note: Audio file is now uploaded automatically when recording stops (see RecordingSessionManager)
+        // No need to upload here - it should already be synced to Convex
 
         // Load settings for generation
         let userBlurb = UserDefaultsManager.shared.userBlurb

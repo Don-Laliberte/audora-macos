@@ -634,9 +634,30 @@ class AudioManager: NSObject, ObservableObject {
                 await self.establishConnection(request: request, session: session, source: source)
 
             } catch {
-                let errorMsg = "\(ErrorMessage.configurationFailed): \(ErrorHandler.shared.handleError(error))"
-                print("❌ \(errorMsg)")
-                print("❌ Raw Error Detail: \(error)") // Log raw error for debugging
+                // Provide more specific error messages
+                var errorMsg: String
+                if let convexError = error as? ConvexError {
+                    errorMsg = convexError.localizedDescription ?? "Backend configuration error"
+                } else {
+                    let handledError = ErrorHandler.shared.handleError(error)
+                    if handledError.contains("Transcription server error") {
+                        // Check for specific error types
+                        let errorDescription = error.localizedDescription.lowercased()
+                        if errorDescription.contains("not found") || errorDescription.contains("404") {
+                            errorMsg = "\(ErrorMessage.configurationFailed): Backend action 'speechmatics:generateJWT' not found. Please ensure your Convex backend has this action implemented."
+                        } else if errorDescription.contains("client not initialized") {
+                            errorMsg = "\(ErrorMessage.configurationFailed): Convex backend not configured. Please set CONVEX_DEPLOYMENT_URL in your Xcode scheme or Config.xcconfig."
+                        } else if errorDescription.contains("authentication") {
+                            errorMsg = "\(ErrorMessage.configurationFailed): Please sign in to use transcription."
+                        } else {
+                            errorMsg = "\(ErrorMessage.configurationFailed): \(handledError)"
+                        }
+                    } else {
+                        errorMsg = "\(ErrorMessage.configurationFailed): \(handledError)"
+                    }
+                }
+                print("❌ [AudioManager] Transcription setup failed: \(errorMsg)")
+                print("❌ [AudioManager] Raw Error Detail: \(error)")
                 await MainActor.run {
                     self.errorMessage = errorMsg
                 }
@@ -831,8 +852,8 @@ class AudioManager: NSObject, ObservableObject {
         guard let messageType = json["message"] as? String else { return }
 
         switch messageType {
-        case "AddTranscript":
-            // Handle transcriptions
+        case "AddTranscript", "AddPartialTranscript":
+            // Handle transcriptions (both AddTranscript and AddPartialTranscript work the same way)
             guard let metadata = json["metadata"] as? [String: Any],
                   let results = json["results"] as? [[String: Any]] else { return }
 
@@ -875,9 +896,13 @@ class AudioManager: NSObject, ObservableObject {
                 self.currentInterim[source] = (self.currentInterim[source] ?? "") + " " + transcriptBuffer
 
                 // Update the UI chunk (marking as interim)
-
-                // Remove previous interim chunk
-                if let lastIndex = self.transcriptChunks.lastIndex(where: { !$0.isFinal && $0.source == source }) {
+                // IMPORTANT: Only remove interim chunks that we created in THIS session
+                // Don't remove existing final chunks from previous sessions when resuming
+                // We identify "this session" interim chunks by checking if they're recent and interim
+                let now = Date()
+                if let lastIndex = self.transcriptChunks.lastIndex(where: { chunk in
+                    !chunk.isFinal && chunk.source == source && abs(chunk.timestamp.timeIntervalSince(now)) < 60
+                }) {
                     self.transcriptChunks.remove(at: lastIndex)
                 }
 
@@ -898,16 +923,25 @@ class AudioManager: NSObject, ObservableObject {
                  let finalText = self.currentInterim[source] ?? ""
                  if finalText.isEmpty { return }
 
-                 // Remove interim
-                 self.transcriptChunks.removeAll { !$0.isFinal && $0.source == source }
-
-                 let chunk = TranscriptChunk(
-                     timestamp: Date(),
-                     source: source,
-                     text: finalText,
-                     isFinal: true
-                 )
-                 self.transcriptChunks.append(chunk)
+                 // Remove only interim chunks for THIS source that were created in THIS session
+                 // Don't remove existing final chunks from previous sessions
+                 // We identify "this session" chunks by checking if they're interim and match the source
+                 let chunksBeforeRemoval = self.transcriptChunks.count
+                 self.transcriptChunks.removeAll { chunk in
+                     !chunk.isFinal && chunk.source == source
+                 }
+                 
+                 // Only append final chunk if we actually had interim text to finalize
+                 // This prevents clearing existing chunks when resuming
+                 if chunksBeforeRemoval > self.transcriptChunks.count || !finalText.isEmpty {
+                     let chunk = TranscriptChunk(
+                         timestamp: Date(),
+                         source: source,
+                         text: finalText,
+                         isFinal: true
+                     )
+                     self.transcriptChunks.append(chunk)
+                 }
                  self.currentInterim[source] = ""
              }
 
@@ -918,9 +952,22 @@ class AudioManager: NSObject, ObservableObject {
         case "Error":
              if let type = json["type"] as? String, let reason = json["reason"] as? String {
                  print("❌ Speechmatics Error: \(type) - \(reason)")
-                 let errorMessage = "Transcription Error: \(reason)"
+                 
+                 // Provide user-friendly error messages for common Speechmatics errors
+                 let userFriendlyMessage: String
+                 let reasonLower = reason.lowercased()
+                 if reasonLower.contains("quota") || reasonLower.contains("concurrent") {
+                     userFriendlyMessage = "Transcription quota exceeded. You've reached your concurrent session limit. Please stop other recordings or upgrade your Speechmatics plan."
+                 } else if reasonLower.contains("unauthorized") || reasonLower.contains("authentication") {
+                     userFriendlyMessage = "Authentication failed. Please check your Speechmatics API key."
+                 } else if reasonLower.contains("rate limit") {
+                     userFriendlyMessage = "Rate limit exceeded. Please try again in a moment."
+                 } else {
+                     userFriendlyMessage = "Transcription Error: \(reason)"
+                 }
+                 
                  DispatchQueue.main.async {
-                     self.errorMessage = errorMessage
+                     self.errorMessage = userFriendlyMessage
                  }
              }
 

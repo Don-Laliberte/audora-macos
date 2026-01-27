@@ -113,14 +113,39 @@ class ConvexService: ObservableObject {
     /// Fetches a JWT for Speechmatics real-time transcription from the backend
     func getSpeechmaticsJWT() async throws -> String {
         guard let client = client else {
+            print("❌ [Speechmatics] Convex client not initialized")
             throw ConvexError.clientNotInitialized
         }
 
-        print("🔑 Fetching Speechmatics JWT from backend...")
-        let jwt: String = try await client.action("speechmatics:generateJWT", with: [:])
+        // Check authentication
+        guard case .authenticated = authState else {
+            print("❌ [Speechmatics] User not authenticated")
+            throw ConvexError.authenticationRequired
+        }
 
-        print("   ✅ JWT fetched successfully")
-        return jwt
+        print("🔑 [Speechmatics] Fetching JWT from backend...")
+        do {
+            let jwt: String = try await client.action("speechmatics:generateJWT", with: [:])
+            print("   ✅ JWT fetched successfully")
+            return jwt
+        } catch {
+            print("❌ [Speechmatics] Failed to fetch JWT: \(error)")
+            print("   💡 Make sure your Convex backend has the 'speechmatics:generateJWT' action")
+            print("   💡 Check that you're authenticated and the backend is accessible")
+            
+            // Provide more specific error messages
+            let errorDescription = error.localizedDescription.lowercased()
+            if errorDescription.contains("not found") || errorDescription.contains("404") {
+                throw NSError(domain: "ConvexService", code: -1, userInfo: [
+                    NSLocalizedDescriptionKey: "Backend action 'speechmatics:generateJWT' not found. Please ensure your Convex backend has this action implemented."
+                ])
+            } else if errorDescription.contains("unauthorized") || errorDescription.contains("401") {
+                throw NSError(domain: "ConvexService", code: -1, userInfo: [
+                    NSLocalizedDescriptionKey: "Authentication failed. Please sign in again."
+                ])
+            }
+            throw error
+        }
     }
 
     /// Checks if Convex is properly configured
@@ -130,6 +155,14 @@ class ConvexService: ObservableObject {
     // MARK: - Notes Generation
 
     /// Generates notes from a transcript using the backend
+    /// NOTE: The backend doesn't currently have a "notes:generate" function.
+    /// The web app uses different functions (transcribeAudio, processRealtimeTranscript) for summaries,
+    /// but those don't support template-based note generation.
+    /// 
+    /// Options:
+    /// 1. Create a new backend function: convex/notes.ts with export const generate = action({ ... })
+    /// 2. Use conversations:importTextTranscript (but it doesn't support templates)
+    /// 3. Generate notes client-side using OpenAI (if API key is available)
     func generateNotes(transcript: String, templateId: String?) async -> AsyncThrowingStream<String, Error> {
         return AsyncThrowingStream { continuation in
             Task {
@@ -138,17 +171,38 @@ class ConvexService: ObservableObject {
                         throw ConvexError.clientNotInitialized
                     }
 
-                    // Call backend action named "notes:generate"
+                    // Check authentication
+                    guard case .authenticated = authState else {
+                        throw ConvexError.authenticationRequired
+                    }
+
+                    // Try to call backend action named "notes:generate"
+                    // If it doesn't exist, we'll get a clear error
                     let args: [String: String] = [
                         "transcript": transcript,
                         "templateId": templateId ?? ""
                     ]
 
+                    print("📝 [Notes] Calling backend action 'notes:generate'...")
+                    print("   ⚠️ Note: This function doesn't exist in the current backend")
+                    print("   💡 The web app uses 'transcribeAudio' and 'processRealtimeTranscript' for summaries")
+                    print("   💡 But those don't support template-based note generation")
+                    print("   💡 You need to create a new 'notes:generate' action in your Convex backend")
+                    
                     let result: String = try await client.action("notes:generate", with: args)
+                    print("   ✅ Notes generated successfully")
 
                     continuation.yield(result)
                     continuation.finish()
                 } catch {
+                    print("❌ [Notes] Failed to generate notes: \(error)")
+                    let errorDescription = error.localizedDescription.lowercased()
+                    if errorDescription.contains("not found") || errorDescription.contains("404") {
+                        print("   💡 The 'notes:generate' action is missing in your Convex backend")
+                        print("   💡 The web app uses different functions that don't support templates")
+                        print("   💡 You need to create a new backend function for template-based notes")
+                        print("   💡 See: https://github.com/psycho-baller/audora for reference")
+                    }
                     continuation.finish(throwing: error)
                 }
             }
@@ -161,29 +215,43 @@ class ConvexService: ObservableObject {
         guard let client = client else { return nil }
 
         // 1. Get upload URL
-        // Standard Convex action for getting upload URL
-        let uploadUrl: String = try await client.action("storage:generateUploadUrl", with: [:])
-        guard let url = URL(string: uploadUrl) else { return nil }
+        // IMPORTANT: This calls a Convex MUTATION (not action)
+        // The function name must match your Convex backend export:
+        // - If in files.ts: "files:generateUploadUrl"
+        // - If in storage.ts: "storage:generateUploadUrl"
+        // - If in audio.ts: "audio:generateUploadUrl"
+        // Update the function name below to match your backend structure
+        do {
+            let uploadUrl: String = try await client.mutation("files:generateUploadUrl", with: [:])
+            guard let url = URL(string: uploadUrl) else { return nil }
 
-        // 2. Upload file
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("audio/m4a", forHTTPHeaderField: "Content-Type")
+            // 2. Upload file
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("audio/m4a", forHTTPHeaderField: "Content-Type")
 
-        let data = try Data(contentsOf: audioFileURL)
-        let (responseData, response) = try await URLSession.shared.upload(for: request, from: data)
+            let data = try Data(contentsOf: audioFileURL)
+            let (responseData, response) = try await URLSession.shared.upload(for: request, from: data)
 
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            return nil
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                return nil
+            }
+
+            // 3. Parse response to get storageId
+            struct UploadResponse: Decodable {
+                let storageId: String
+            }
+
+            let uploadResponse = try JSONDecoder().decode(UploadResponse.self, from: responseData)
+            return uploadResponse.storageId
+        } catch {
+            print("❌ [ConvexService] Failed to upload audio file: \(error)")
+            print("   💡 Make sure your Convex backend has a mutation named 'files:generateUploadUrl'")
+            print("   💡 The function should be defined as: export const generateUploadUrl = mutation({ ... })")
+            print("   💡 If your function is in a different file, update the name (e.g., 'storage:generateUploadUrl' or 'audio:generateUploadUrl')")
+            print("   💡 Ensure your Convex backend is running (npx convex dev) or deployed (npx convex deploy)")
+            throw error
         }
-
-        // 3. Parse response to get storageId
-        struct UploadResponse: Decodable {
-            let storageId: String
-        }
-
-        let uploadResponse = try JSONDecoder().decode(UploadResponse.self, from: responseData)
-        return uploadResponse.storageId
     }
 }
 

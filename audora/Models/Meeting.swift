@@ -144,23 +144,27 @@ struct TranscriptionSession: Codable, Identifiable, Hashable {
 
     // Computed property for backward compatibility with existing code
     var transcript: String {
-        return transcriptChunks
-            .filter { $0.isFinal }
+        // Prefer final chunks, but fall back to interim chunks if no final chunks exist
+        let finalChunks = transcriptChunks.filter { $0.isFinal }
+        let chunksToUse = finalChunks.isEmpty ? transcriptChunks : finalChunks
+        return chunksToUse
             .map { "[\($0.source.rawValue)] \($0.text)" }
             .joined(separator: " ")
     }
 
     // Formatted transcript for copying with collapsed sequential chunks
     var formattedTranscript: String {
+        // Prefer final chunks, but fall back to interim chunks if no final chunks exist
         let finalChunks = transcriptChunks.filter { $0.isFinal }
+        let chunksToUse = finalChunks.isEmpty ? transcriptChunks : finalChunks
 
-        guard !finalChunks.isEmpty else { return "" }
+        guard !chunksToUse.isEmpty else { return "" }
 
         var result: [String] = []
         var currentSource: AudioSource?
         var currentTexts: [String] = []
 
-        for chunk in finalChunks {
+        for chunk in chunksToUse {
             if chunk.source != currentSource {
                 // Finish previous section if exists
                 if let source = currentSource, !currentTexts.isEmpty {
