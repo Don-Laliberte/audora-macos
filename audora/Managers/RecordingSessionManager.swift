@@ -213,28 +213,39 @@ class RecordingSessionManager: ObservableObject {
     func stopRecording() {
         print("🛑 Stopping recording for meeting: \(activeMeetingId?.uuidString ?? "unknown")")
         
+        // Capture meeting ID before we clear it (we'll clear in the delayed block)
+        let meetingIdToSave = activeMeetingId
         audioManager.stopRecording()
         
-        // Save audio file and update meeting
+        // Save audio file immediately (synchronous)
         var audioFileURL: String? = nil
-        if let activeMeetingId = activeMeetingId {
-            // Stop recording and get the audio file URL
-            if let savedAudioURL = AudioRecordingManager.shared.stopRecordingAndSave(for: activeMeetingId) {
+        if let meetingId = meetingIdToSave {
+            if let savedAudioURL = AudioRecordingManager.shared.stopRecordingAndSave(for: meetingId) {
                 audioFileURL = savedAudioURL.path
                 print("✅ Audio file saved: \(savedAudioURL.path)")
-                
-                // Upload audio file to Convex in the background (non-blocking sync)
                 Task {
-                    await uploadAudioFileToConvex(audioFileURL: savedAudioURL, meetingId: activeMeetingId)
+                    await uploadAudioFileToConvex(audioFileURL: savedAudioURL, meetingId: meetingId)
                 }
             }
             
-            // Update meeting with transcript and audio file URL
-            updateActiveMeeting(meetingId: activeMeetingId, chunks: activeRecordingTranscriptChunks, audioFileURL: audioFileURL)
+            // Defer save and state clear so we capture final transcript segments.
+            // The server may send EndOfTranscript (and a last AddTranscript) after we send EndOfStream;
+            // those are processed asynchronously. If we save and clear now, we'd persist without the
+            // last segment(s) and resume would load that incomplete state.
+            let urlToSave = audioFileURL
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self = self else { return }
+                let chunksToSave = self.activeRecordingTranscriptChunks
+                self.updateActiveMeeting(meetingId: meetingId, chunks: chunksToSave, audioFileURL: urlToSave)
+                if self.activeMeetingId == meetingId {
+                    self.activeMeetingId = nil
+                    self.activeRecordingTranscriptChunks = []
+                }
+            }
+        } else {
+            activeMeetingId = nil
+            activeRecordingTranscriptChunks = []
         }
-        
-        activeMeetingId = nil
-        activeRecordingTranscriptChunks = []
     }
     
     /// Uploads audio file to Convex storage (non-blocking background task)
