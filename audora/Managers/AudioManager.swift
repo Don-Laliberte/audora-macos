@@ -878,12 +878,16 @@ class AudioManager: NSObject, ObservableObject {
         case "AddTranscript", "AddPartialTranscript":
             // Match backend web app (CurrentView.tsx): enable_partials false, only AddTranscript.
             // Each result is one word or punctuation. Accumulate into buffer; commit only on is_eos.
-            guard let metadata = json["metadata"] as? [String: Any],
-                  let results = json["results"] as? [[String: Any]] else { return }
+            // Defensive: ensure "results" is an array of dicts (avoid crash if API sends wrong type, e.g. date/number)
+            guard let metadata = json["metadata"] as? [String: Any] else { return }
+            guard let rawResults = json["results"],
+                  rawResults is [Any],
+                  let results = rawResults as? [[String: Any]] else { return }
 
             var transcriptBuffer = ""
             var sawEndOfSentence = false
-            for result in results {
+            for rawResult in results {
+                guard let result = rawResult as? [String: Any] else { continue }
                 guard let alternatives = result["alternatives"] as? [[String: Any]],
                       let firstAlt = alternatives.first,
                       let content = firstAlt["content"] as? String, !content.isEmpty else { continue }
@@ -949,31 +953,30 @@ class AudioManager: NSObject, ObservableObject {
                  let finalText = self.currentInterim[source] ?? ""
                  if finalText.isEmpty { return }
 
-                 // Remove only interim chunks for THIS source that were created in THIS session
-                 // Don't remove existing final chunks from previous sessions
-                 // We identify "this session" chunks by checking if they're interim and match the source
-                 let chunksBeforeRemoval = self.transcriptChunks.count
-                 self.transcriptChunks.removeAll { chunk in
+                 // Work with a local copy to avoid any corruption/type confusion (e.g. count sent to wrong type)
+                 var chunks = self.transcriptChunks
+                 let chunksBeforeRemoval = chunks.count
+                 chunks.removeAll { chunk in
                      !chunk.isFinal && chunk.source == source
                  }
-                 
-                 // Only append final chunk if we actually had interim text to finalize
-                 // This prevents clearing existing chunks when resuming
-                 if chunksBeforeRemoval > self.transcriptChunks.count || !finalText.isEmpty {
-                     let chunk = TranscriptChunk(
+                 if chunksBeforeRemoval > chunks.count || !finalText.isEmpty {
+                     chunks.append(TranscriptChunk(
                          timestamp: Date(),
                          source: source,
                          text: finalText,
                          isFinal: true
-                     )
-                     self.transcriptChunks.append(chunk)
+                     ))
                  }
+                 self.transcriptChunks = chunks
                  self.currentInterim[source] = ""
              }
 
         case "AudioAdded":
             if let seqNo = json["seq_no"] as? Int {
-                lastAudioSeqNo[source] = seqNo
+                // Update on main thread only; lastAudioSeqNo is also read from main in sendEndOfStreamIfNeeded
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastAudioSeqNo[source] = seqNo
+                }
             }
             break
 
