@@ -248,39 +248,48 @@ class RecordingSessionManager: ObservableObject {
         }
     }
     
-    /// Uploads audio file to Convex storage (non-blocking background task)
+    /// Uploads audio file to Convex storage (non-blocking background task).
+    /// Replaces the previous upload for this meeting so we keep one file per meeting instead of many.
     private func uploadAudioFileToConvex(audioFileURL: URL, meetingId: UUID) async {
-        // Check if file exists
         guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
             print("⚠️ Audio file not found for upload: \(audioFileURL.path)")
             return
         }
-        
-        // Check authentication before uploading
         let authState = await MainActor.run { ConvexService.shared.authState }
         guard case .authenticated = authState else {
             print("⚠️ Not authenticated, skipping audio upload to Convex")
             return
         }
-        
+        let previousStorageId = await MainActor.run {
+            LocalStorageManager.shared.loadMeetings().first(where: { $0.id == meetingId })?.audioStorageId
+        }
         do {
             print("📤 [Sync] Uploading audio file to Convex after recording stopped...")
-            let storageId = try await ConvexService.shared.uploadAudioFile(
+            let newStorageId = try await ConvexService.shared.uploadAudioFile(
                 audioFileURL: audioFileURL,
-                meetingId: meetingId
+                meetingId: meetingId,
+                previousStorageId: previousStorageId
             )
-            
-            if let storageId = storageId {
-                print("✅ [Sync] Audio file uploaded to Convex. Storage ID: \(storageId)")
-                // TODO: Store storageId in meeting when database schema is updated
-                // For now, we just log it
+            if let newStorageId = newStorageId {
+                print("✅ [Sync] Audio file uploaded to Convex. Storage ID: \(newStorageId)")
+                await MainActor.run {
+                    updateMeetingAudioStorageId(meetingId: meetingId, storageId: newStorageId)
+                }
             } else {
                 print("⚠️ [Sync] Audio file uploaded but no storage ID returned")
             }
         } catch {
-            // Log error but don't block - this is a background sync operation
             print("⚠️ [Sync] Failed to upload audio file to Convex: \(error.localizedDescription)")
-            print("   💡 The file is still saved locally and can be uploaded later")
+        }
+    }
+
+    /// Updates and persists the meeting's Convex audio storage ID (so the next upload can delete this one).
+    private func updateMeetingAudioStorageId(meetingId: UUID, storageId: String) {
+        var meetings = LocalStorageManager.shared.loadMeetings()
+        guard let index = meetings.firstIndex(where: { $0.id == meetingId }) else { return }
+        meetings[index].audioStorageId = storageId
+        if LocalStorageManager.shared.saveMeeting(meetings[index]) {
+            NotificationCenter.default.post(name: .meetingSaved, object: meetings[index])
         }
     }
     
@@ -292,18 +301,16 @@ class RecordingSessionManager: ObservableObject {
         updateActiveMeeting(meetingId: meetingId, chunks: chunks, audioFileURL: nil)
     }
     
-    private func updateActiveMeeting(meetingId: UUID, chunks: [TranscriptChunk], audioFileURL: String?) {
-        // Load all meetings
+    private func updateActiveMeeting(meetingId: UUID, chunks: [TranscriptChunk], audioFileURL: String?, audioStorageId: String? = nil) {
         var meetings = LocalStorageManager.shared.loadMeetings()
-        
-        // Find and update the active meeting
         if let index = meetings.firstIndex(where: { $0.id == meetingId }) {
             meetings[index].transcriptChunks = chunks
             if let audioFileURL = audioFileURL {
                 meetings[index].audioFileURL = audioFileURL
             }
-            
-            // Save the updated meeting
+            if let audioStorageId = audioStorageId {
+                meetings[index].audioStorageId = audioStorageId
+            }
             let success = LocalStorageManager.shared.saveMeeting(meetings[index])
             if success {
                 print("✅ Saved meeting: \(meetingId.uuidString)")
