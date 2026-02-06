@@ -10,14 +10,7 @@ class RecordingSessionManager: ObservableObject {
     @Published var isRecording = false
     @Published var activeMeetingId: UUID?
     @Published var errorMessage: String?
-    @Published var activeRecordingTranscriptChunksUpdated: [TranscriptChunk] = [] {
-        didSet {
-            // Log when chunks are updated to help debug transcript clearing issues
-            if !activeRecordingTranscriptChunksUpdated.isEmpty {
-                print("📊 [RecordingSessionManager] activeRecordingTranscriptChunksUpdated changed: \(activeRecordingTranscriptChunksUpdated.count) chunks")
-            }
-        }
-    }
+    @Published var activeRecordingTranscriptChunksUpdated: [TranscriptChunk] = []
     
     private let audioManager = AudioManager.shared
     private var cancellables = Set<AnyCancellable>()
@@ -105,20 +98,13 @@ class RecordingSessionManager: ObservableObject {
                     // Merge: existing final chunks + new chunks (both final and interim)
                     let mergedChunks = existingFinalChunks + newUniqueChunks
                     
-                    // Only update if the merged result is different to avoid unnecessary updates
+                    // Only update our state and UI; do NOT write back to audioManager here.
+                    // Writing back causes a feedback loop (chunk count oscillates 8/9) and console spam.
                     if mergedChunks.count != self.activeRecordingTranscriptChunks.count ||
                        !mergedChunks.elementsEqual(self.activeRecordingTranscriptChunks, by: { $0.id == $1.id }) {
                         self.activeRecordingTranscriptChunks = mergedChunks
                         self.activeRecordingTranscriptChunksUpdated = mergedChunks
                         self.transcriptUpdateSubject.send(mergedChunks)
-                        
-                        // Update audioManager to keep it in sync, but only if it's different
-                        if audioManager.transcriptChunks.count != mergedChunks.count ||
-                           !audioManager.transcriptChunks.elementsEqual(mergedChunks, by: { $0.id == $1.id }) {
-                            DispatchQueue.main.async {
-                                self.audioManager.transcriptChunks = mergedChunks
-                            }
-                        }
                     }
                 } else if self.activeRecordingTranscriptChunks.isEmpty {
                     // No existing chunks, use new chunks

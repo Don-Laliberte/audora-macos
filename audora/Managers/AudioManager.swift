@@ -718,7 +718,7 @@ class AudioManager: NSObject, ObservableObject {
             ],
             "transcription_config": [
                 "language": "en",
-                "enable_partials": true,
+                "enable_partials": false,
                 "max_delay": 2
             ]
         ]
@@ -853,66 +853,69 @@ class AudioManager: NSObject, ObservableObject {
 
         switch messageType {
         case "AddTranscript", "AddPartialTranscript":
-            // Handle transcriptions (both AddTranscript and AddPartialTranscript work the same way)
+            // Match backend web app (CurrentView.tsx): enable_partials false, only AddTranscript.
+            // Each result is one word or punctuation. Accumulate into buffer; commit only on is_eos.
             guard let metadata = json["metadata"] as? [String: Any],
                   let results = json["results"] as? [[String: Any]] else { return }
 
             var transcriptBuffer = ""
-            var isFinal = false
-
-            // Check if this is a final transcript (Speechmatics default is partial unless finalized)
-            // Actually Speechmatics V2 sends 'AddTranscript' for both.
-            // We use 'is_approximate' or similar fields if available, but usually V2 results are additive/corrections.
-            // Simplified: If 'transcript' field exists in metadata, use it? No.
-            // Iterate results.
-
+            var sawEndOfSentence = false
             for result in results {
-                if let alternatives = result["alternatives"] as? [[String: Any]],
-                   let firstAlt = alternatives.first,
-                   let content = firstAlt["content"] as? String {
-                     transcriptBuffer += content + " "
+                guard let alternatives = result["alternatives"] as? [[String: Any]],
+                      let firstAlt = alternatives.first,
+                      let content = firstAlt["content"] as? String, !content.isEmpty else { continue }
+                if (result["is_eos"] as? Bool) == true { sawEndOfSentence = true }
+                let type = result["type"] as? String ?? "word"
+                if type == "word" {
+                    transcriptBuffer += (transcriptBuffer.isEmpty ? "" : " ") + content
+                } else if type == "punctuation" {
+                    transcriptBuffer += content
                 }
             }
-
-            // Cleanup buffer
             transcriptBuffer = transcriptBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
-            if transcriptBuffer.isEmpty { return }
+            if transcriptBuffer.isEmpty && !sawEndOfSentence { return }
 
-            // Speechmatics V2 sends finalized results when "is_eos" is true?
-            // Or look at 'type' in results?
-            // For now, treat all AddTranscript as partials updating the current view,
-            // unless we determine it's a stabilized segment.
-            // To properly match OpenAI's 'delta' vs 'completed', we'd need to track sequence numbers.
-            // For simplicity in this migration: treating as STREAMING updates.
+            let messageText = transcriptBuffer
+            let shouldCommit = sawEndOfSentence
 
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
 
-                // For Speechmatics, AddTranscript usually contains new words.
-                // However, without complex logic, we might just append?
-                // Actually, 'results' contains a list of words.
+                // Accumulate across messages (like web sentenceBuffer); commit only when is_eos.
+                let existing = self.currentInterim[source] ?? ""
+                let newBuffer: String
+                if existing.isEmpty {
+                    newBuffer = messageText
+                } else if messageText.isEmpty {
+                    newBuffer = existing
+                } else {
+                    newBuffer = (existing + " " + messageText).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                self.currentInterim[source] = newBuffer
 
-                // Let's assume we treat it as an update to the current "Interim"
-                self.currentInterim[source] = (self.currentInterim[source] ?? "") + " " + transcriptBuffer
-
-                // Update the UI chunk (marking as interim)
-                // IMPORTANT: Only remove interim chunks that we created in THIS session
-                // Don't remove existing final chunks from previous sessions when resuming
-                // We identify "this session" interim chunks by checking if they're recent and interim
-                let now = Date()
-                if let lastIndex = self.transcriptChunks.lastIndex(where: { chunk in
-                    !chunk.isFinal && chunk.source == source && abs(chunk.timestamp.timeIntervalSince(now)) < 60
-                }) {
+                // Remove previous interim chunk for this source
+                if let lastIndex = self.transcriptChunks.lastIndex(where: { !$0.isFinal && $0.source == source }) {
                     self.transcriptChunks.remove(at: lastIndex)
                 }
 
-                let chunk = TranscriptChunk(
-                    timestamp: Date(),
-                    source: source,
-                    text: self.currentInterim[source] ?? "",
-                    isFinal: false // Keep it false until EndOfTranscript or explicit finalization logic
-                )
-                self.transcriptChunks.append(chunk)
+                if shouldCommit && !newBuffer.isEmpty {
+                    // End of sentence: append final chunk and clear buffer (match web app)
+                    self.transcriptChunks.append(TranscriptChunk(
+                        timestamp: Date(),
+                        source: source,
+                        text: newBuffer,
+                        isFinal: true
+                    ))
+                    self.currentInterim[source] = ""
+                } else if !newBuffer.isEmpty {
+                    // In progress: single interim chunk
+                    self.transcriptChunks.append(TranscriptChunk(
+                        timestamp: Date(),
+                        source: source,
+                        text: newBuffer,
+                        isFinal: false
+                    ))
+                }
             }
 
         case "EndOfTranscript":

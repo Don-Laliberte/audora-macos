@@ -216,8 +216,17 @@ struct TranscriptionSession: Codable, Identifiable, Hashable {
                 currentTexts = [chunk.text]
                 currentTimestamp = chunk.timestamp
             } else {
-                // Same source, add to current section
-                currentTexts.append(chunk.text)
+                // Same source: avoid duplicating when chunks are cumulative or identical
+                let text = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let last = currentTexts.last?.trimmingCharacters(in: .whitespacesAndNewlines), !last.isEmpty {
+                    if text == last || text.hasPrefix(last) {
+                        currentTexts[currentTexts.count - 1] = text
+                    } else {
+                        currentTexts.append(text)
+                    }
+                } else {
+                    currentTexts.append(text)
+                }
             }
         }
 
