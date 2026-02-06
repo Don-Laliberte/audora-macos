@@ -50,6 +50,9 @@ class AudioManager: NSObject, ObservableObject {
     // Session refresh timers to prevent 30-minute expiry
     private var sessionRefreshTimers: [AudioSource: Timer] = [:]
 
+    // Last AudioAdded seq_no per source (required for EndOfStream so Speechmatics releases the session)
+    private var lastAudioSeqNo: [AudioSource: Int] = [.mic: 0, .system: 0]
+
     // Add reference to ConvexService
     var convexService: ConvexService? = ConvexService.shared
 
@@ -208,6 +211,9 @@ class AudioManager: NSObject, ObservableObject {
 
         // Stop microphone capture
         cleanupAudioEngine()
+
+        // Send EndOfStream so Speechmatics releases the session
+        sendEndOfStreamIfNeeded()
 
         // Close WebSocket
         micSocketTask?.cancel(with: .normalClosure, reason: nil)
@@ -566,11 +572,16 @@ class AudioManager: NSObject, ObservableObject {
         cleanupAudioEngine()
         micRetryCount = 0
 
-        // Close WebSocket
-        micSocketTask?.cancel(with: .normalClosure, reason: nil)
-        micSocketTask = nil
-        systemSocketTask?.cancel(with: .normalClosure, reason: nil)
-        systemSocketTask = nil
+        // Send EndOfStream so Speechmatics releases the session (avoids hitting concurrent session limit on resume)
+        sendEndOfStreamIfNeeded()
+
+        // Close WebSocket after a short delay so EndOfStream can be sent
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.micSocketTask?.cancel(with: .normalClosure, reason: nil)
+            self?.micSocketTask = nil
+            self?.systemSocketTask?.cancel(with: .normalClosure, reason: nil)
+            self?.systemSocketTask = nil
+        }
 
         // Invalidate ping timers
         pingTimers.values.forEach { $0.invalidate() }
@@ -580,9 +591,21 @@ class AudioManager: NSObject, ObservableObject {
         sessionRefreshTimers.values.forEach { $0.invalidate() }
         sessionRefreshTimers.removeAll()
 
-
-
         print("Recording stopped")
+    }
+
+    /// Sends EndOfStream to each active Speechmatics connection so the server releases the session.
+    /// Without this, pausing then resuming opens new sessions and can hit the concurrent session limit.
+    private func sendEndOfStreamIfNeeded() {
+        if let task = micSocketTask, task.state == .running {
+            let seqNo = lastAudioSeqNo[.mic] ?? 0
+            sendMessage(["message": "EndOfStream", "last_seq_no": seqNo], source: .mic)
+        }
+        if let task = systemSocketTask, task.state == .running {
+            let seqNo = lastAudioSeqNo[.system] ?? 0
+            sendMessage(["message": "EndOfStream", "last_seq_no": seqNo], source: .system)
+        }
+        lastAudioSeqNo = [.mic: 0, .system: 0]
     }
 
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, converter: AVAudioConverter, targetFormat: AVAudioFormat, source: AudioSource) {
@@ -949,7 +972,9 @@ class AudioManager: NSObject, ObservableObject {
              }
 
         case "AudioAdded":
-            // Ack
+            if let seqNo = json["seq_no"] as? Int {
+                lastAudioSeqNo[source] = seqNo
+            }
             break
 
         case "Error":
