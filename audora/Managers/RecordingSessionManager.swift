@@ -19,6 +19,9 @@ class RecordingSessionManager: ObservableObject {
     // Store transcript chunks for the active recording session
     private var activeRecordingTranscriptChunks: [TranscriptChunk] = []
     
+    // In-memory cache: last uploaded Convex storage ID per meeting (so we can delete it on next upload even if the previous upload just completed and disk hasn't been read yet)
+    private var lastUploadedStorageIdByMeeting: [UUID: String] = [:]
+    
     // Flag to prevent recursive restoration loops
     private var isRestoringChunks = false
     
@@ -138,6 +141,9 @@ class RecordingSessionManager: ObservableObject {
         var hadExistingChunks = false
         var savedChunks: [TranscriptChunk] = []
         if let existingMeeting = LocalStorageManager.shared.loadMeetings().first(where: { $0.id == meetingId }) {
+            if let sid = existingMeeting.audioStorageId {
+                lastUploadedStorageIdByMeeting[meetingId] = sid
+            }
             let existingChunks = existingMeeting.transcriptChunks
             if !existingChunks.isEmpty {
                 hadExistingChunks = true
@@ -260,11 +266,17 @@ class RecordingSessionManager: ObservableObject {
             print("⚠️ Not authenticated, skipping audio upload to Convex")
             return
         }
+        // Use in-memory cache first so we don't miss the previous ID when the prior upload just completed (race with disk read)
         let previousStorageId = await MainActor.run {
-            LocalStorageManager.shared.loadMeetings().first(where: { $0.id == meetingId })?.audioStorageId
+            lastUploadedStorageIdByMeeting[meetingId]
+                ?? LocalStorageManager.shared.loadMeetings().first(where: { $0.id == meetingId })?.audioStorageId
+        }
+        if let prev = previousStorageId {
+            print("📤 [Sync] Uploading audio file to Convex (will replace previous: \(prev.prefix(12))...)")
+        } else {
+            print("📤 [Sync] Uploading audio file to Convex (first upload for this meeting)...")
         }
         do {
-            print("📤 [Sync] Uploading audio file to Convex after recording stopped...")
             let newStorageId = try await ConvexService.shared.uploadAudioFile(
                 audioFileURL: audioFileURL,
                 meetingId: meetingId,
@@ -273,6 +285,7 @@ class RecordingSessionManager: ObservableObject {
             if let newStorageId = newStorageId {
                 print("✅ [Sync] Audio file uploaded to Convex. Storage ID: \(newStorageId)")
                 await MainActor.run {
+                    lastUploadedStorageIdByMeeting[meetingId] = newStorageId
                     updateMeetingAudioStorageId(meetingId: meetingId, storageId: newStorageId)
                 }
             } else {
@@ -286,10 +299,16 @@ class RecordingSessionManager: ObservableObject {
     /// Updates and persists the meeting's Convex audio storage ID (so the next upload can delete this one).
     private func updateMeetingAudioStorageId(meetingId: UUID, storageId: String) {
         var meetings = LocalStorageManager.shared.loadMeetings()
-        guard let index = meetings.firstIndex(where: { $0.id == meetingId }) else { return }
+        guard let index = meetings.firstIndex(where: { $0.id == meetingId }) else {
+            print("⚠️ [Sync] updateMeetingAudioStorageId: meeting \(meetingId.uuidString.prefix(8))... not found in list")
+            return
+        }
         meetings[index].audioStorageId = storageId
         if LocalStorageManager.shared.saveMeeting(meetings[index]) {
+            print("💾 [Sync] Saved audioStorageId for meeting \(meetingId.uuidString.prefix(8))...")
             NotificationCenter.default.post(name: .meetingSaved, object: meetings[index])
+        } else {
+            print("⚠️ [Sync] Failed to save audioStorageId for meeting \(meetingId.uuidString.prefix(8))...")
         }
     }
     

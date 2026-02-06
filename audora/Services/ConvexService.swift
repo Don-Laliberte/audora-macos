@@ -242,7 +242,15 @@ class ConvexService: ObservableObject {
 
             // Delete previous file so we keep one file per meeting (avoid redundant files on stop/resume)
             if let previous = previousStorageId, !previous.isEmpty {
-                try? await deleteStorageId(previous)
+                do {
+                    try await deleteStorageId(previous)
+                    print("🗑️ [Sync] Deleted previous Convex file: \(previous.prefix(12))...")
+                } catch {
+                    print("⚠️ [Sync] Failed to delete previous file \(previous.prefix(12))...: \(error.localizedDescription)")
+                    print("   💡 Ensure your backend has 'files:deleteStorageId' deployed (npx convex deploy)")
+                }
+            } else {
+                print("📤 [Sync] No previous storage ID to delete (first upload for this meeting)")
             }
             return newStorageId
         } catch {
